@@ -314,8 +314,8 @@ export class OnboardingController {
     this.renderBuddyMeta(processed.buddyMeta, processed.hasRealBuddy);
     this.setUploadStatus(
       processed.hasRealBuddy
-        ? `${processed.buddyMeta?.rarityLabel || "Rare"} ${processed.buddyMeta?.species || "buddy"} detected — aura unlocked!`
-        : "Custom buddy ready! No rarity aura detected, but your sprite looks great."
+        ? `${processed.buddyMeta?.rarityLabel || "Rare"} ${capitalize(processed.buddyMeta?.species || "buddy")} detected — aura unlocked!`
+        : `${capitalize(processed.buddyMeta?.species || "Buddy")} ready! No rarity aura detected, but your sprite looks great.`
     );
     this.updateEnterState();
 
@@ -460,7 +460,7 @@ export class OnboardingController {
     root.classList.remove("hidden");
     const name = meta.buddyName || "Buddy";
     const rarity = meta.rarityLabel || "Common";
-    const species = meta.species || "buddy";
+    const species = capitalize(meta.species || "buddy");
     const stars = meta.rarityStars || 1;
     const starDisplay = "★".repeat(stars) + "☆".repeat(Math.max(0, 5 - stars));
     const aura = hasRealBuddy ? "Aura unlocked" : "No aura";
@@ -472,14 +472,15 @@ export class OnboardingController {
 
     root.innerHTML = `
       <div class="parsed-buddy-meta__name">${name}</div>
-      <div class="parsed-buddy-meta__rarity">${starDisplay} ${rarity} ${species}</div>
+      <div class="parsed-buddy-meta__species">${species}</div>
+      <div class="parsed-buddy-meta__rarity">${starDisplay} ${rarity}</div>
       <div class="parsed-buddy-meta__aura">${hasRealBuddy ? "✨ " : ""}${aura}</div>
       <div class="parsed-buddy-meta__stats">
-        <span title="Debugging">🐛 ${debugging}</span>
-        <span title="Patience">🧘 ${patience}</span>
-        <span title="Chaos">🌀 ${chaos}</span>
-        <span title="Wisdom">🦉 ${wisdom}</span>
-        <span title="Snark">😏 ${snark}</span>
+        <span>Debugging ${debugging}</span>
+        <span>Patience ${patience}</span>
+        <span>Chaos ${chaos}</span>
+        <span>Wisdom ${wisdom}</span>
+        <span>Snark ${snark}</span>
       </div>
     `;
   }
@@ -563,6 +564,10 @@ async function fetchWithRetry(url, options, retries = 2) {
     }
   }
   throw new Error("Upload failed after retries.");
+}
+
+function capitalize(text) {
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : "";
 }
 
 function validateUploadFile(file) {

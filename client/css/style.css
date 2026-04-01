@@ -378,6 +378,14 @@ button {
   line-height: 1.5;
 }
 
+.parsed-buddy-meta__species {
+  color: var(--ink-muted);
+  font-size: 10px;
+  line-height: 1.6;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+}
+
 .parsed-buddy-meta__rarity {
   color: var(--accent);
   font-size: 11px;
