@@ -138,7 +138,8 @@ app.post("/api/process-sprite", upload.single("buddy"), async (req, res) => {
     const generated = await generateBuddySpriteSheet({
       sourceBuffer: file.buffer,
       cropRegion: parsed.cropRegion,
-      dominantColor: parsed.buddyMeta?.dominantColor
+      dominantColor: parsed.buddyMeta?.dominantColor,
+      species: parsed.buddyMeta?.species
     });
 
     const entry = {

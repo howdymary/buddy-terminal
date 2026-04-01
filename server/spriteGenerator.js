@@ -1,11 +1,27 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 import sharp from "sharp";
 
-export async function generateBuddySpriteSheet({ sourceBuffer, cropRegion, dominantColor }) {
-  const source = sharp(sourceBuffer, { animated: false }).rotate();
-  const metadata = await source.metadata();
-  const safeCrop = clampCropRegion(cropRegion, metadata.width ?? 32, metadata.height ?? 32);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const defaultBuddyDir = path.resolve(__dirname, "../client/assets/default-buddies");
 
-  const baseSprite = await buildTransparentSpriteBase(source, safeCrop);
+const FALLBACK_SPECIES = "ferret";
+
+export async function generateBuddySpriteSheet({ sourceBuffer, cropRegion, dominantColor, species }) {
+  const speciesSvg = resolveSpeciesSvg(species);
+  let baseSprite;
+
+  if (speciesSvg) {
+    baseSprite = await buildSpriteBaseFromSvg(speciesSvg);
+  } else {
+    const source = sharp(sourceBuffer, { animated: false }).rotate();
+    const metadata = await source.metadata();
+    const safeCrop = clampCropRegion(cropRegion, metadata.width ?? 32, metadata.height ?? 32);
+    baseSprite = await buildTransparentSpriteBase(source, safeCrop);
+  }
 
   const glow = hexToRgb(dominantColor ?? "#79c4a0");
   const frames = await Promise.all([
@@ -151,6 +167,27 @@ async function createFrame(baseSprite, direction, frame, glow) {
       }
     ])
     .png()
+    .toBuffer();
+}
+
+function resolveSpeciesSvg(species) {
+  if (!species) return null;
+  const normalized = species.toLowerCase().replace(/[^a-z]/g, "");
+  const svgPath = path.join(defaultBuddyDir, `${normalized}.svg`);
+  if (fs.existsSync(svgPath)) return svgPath;
+  const fallbackPath = path.join(defaultBuddyDir, `${FALLBACK_SPECIES}.svg`);
+  return fs.existsSync(fallbackPath) ? fallbackPath : null;
+}
+
+async function buildSpriteBaseFromSvg(svgPath) {
+  return sharp(svgPath, { density: 72 })
+    .resize(32, 32, {
+      fit: "contain",
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+      kernel: sharp.kernel.nearest
+    })
+    .ensureAlpha()
+    .png({ palette: true, colors: 16, compressionLevel: 9 })
     .toBuffer();
 }
 

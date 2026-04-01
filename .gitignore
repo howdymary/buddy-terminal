@@ -5,3 +5,5 @@ server/logs/
 server/*.db
 server/*.db-wal
 server/*.db-shm
+eng.traineddata
+CODEX_PROMPT.md
