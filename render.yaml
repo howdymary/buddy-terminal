@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: buddy-terminal
+    runtime: node
+    plan: starter
+    region: oregon
+    branch: main
+    buildCommand: cd server && npm ci
+    startCommand: cd server && npm start
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    domains:
+      - buddyterminal.com
+    buildFilter:
+      paths:
+        - client/**
+        - server/**
+        - render.yaml
+        - README.md
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: BUDDY_TERMINAL_DB_PATH
+        value: /var/data/buddy-terminal.db
+    disk:
+      name: buddy-terminal-data
+      mountPath: /var/data
+      sizeGB: 5
