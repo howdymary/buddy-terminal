@@ -418,10 +418,7 @@ button {
 .game-screen {
   position: absolute;
   inset: 0;
-  background:
-    radial-gradient(circle at 50% 15%, rgba(106, 155, 204, 0.14), transparent 30%),
-    radial-gradient(circle at 50% 100%, rgba(120, 140, 93, 0.18), transparent 46%),
-    #141413;
+  background: #141413;
 }
 
 #gameCanvas {
@@ -429,7 +426,6 @@ button {
   height: 100%;
   display: block;
   image-rendering: pixelated;
-  filter: saturate(1.04) contrast(1.03);
 }
 
 .sr-only {
@@ -461,12 +457,11 @@ button {
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  background: linear-gradient(180deg, rgba(20, 20, 19, 0.9), rgba(20, 20, 19, 0.74));
-  border: 3px solid rgba(176, 174, 165, 0.18);
+  background: rgba(20, 20, 19, 0.88);
+  border: 3px solid rgba(176, 174, 165, 0.24);
   border-radius: 999px;
   padding: 12px 14px;
   backdrop-filter: blur(8px);
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.2);
   pointer-events: auto;
 }
 
@@ -495,7 +490,7 @@ button {
   bottom: 110px;
   width: min(420px, calc(100vw - 36px));
   padding: 14px;
-  background: rgba(20, 20, 19, 0.82);
+  background: rgba(20, 20, 19, 0.88);
   border: 3px solid rgba(176, 174, 165, 0.24);
   border-radius: 18px;
   backdrop-filter: blur(10px);
@@ -582,10 +577,9 @@ button {
   align-items: center;
   padding: 12px;
   border-radius: 18px;
-  background: rgba(20, 20, 19, 0.84);
+  background: rgba(20, 20, 19, 0.88);
   border: 3px solid rgba(176, 174, 165, 0.24);
   backdrop-filter: blur(10px);
-  box-shadow: 0 18px 32px rgba(0, 0, 0, 0.24);
 }
 
 .chat-bar.open {
@@ -614,53 +608,20 @@ button {
   justify-content: space-between;
   align-items: end;
   pointer-events: none;
-  gap: 14px;
 }
 
-.touch-stick,
+.dpad,
 .mobile-actions {
   pointer-events: auto;
 }
 
-.touch-stick {
-  width: 136px;
-  height: 136px;
+.dpad {
+  width: 148px;
+  height: 148px;
   position: relative;
 }
 
-.touch-stick__ring {
-  position: absolute;
-  inset: 10px;
-  border-radius: 999px;
-  border: 3px solid rgba(176, 174, 165, 0.24);
-  background:
-    radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.05), transparent 46%),
-    rgba(20, 20, 19, 0.58);
-  backdrop-filter: blur(8px);
-}
-
-.touch-stick__knob {
-  position: absolute;
-  top: calc(50% - 22px);
-  left: calc(50% - 22px);
-  width: 44px;
-  height: 44px;
-  border-radius: 999px;
-  border: 3px solid rgba(217, 119, 87, 0.38);
-  background: linear-gradient(180deg, rgba(217, 119, 87, 0.36), rgba(217, 119, 87, 0.2));
-  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.18);
-  transition: transform 60ms linear;
-}
-
-.touch-stick__label {
-  position: absolute;
-  bottom: -18px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 8px;
-  color: var(--ink-muted);
-}
-
+.dpad button,
 .mobile-actions button {
   position: absolute;
   width: 52px;
@@ -671,8 +632,12 @@ button {
   color: var(--ink);
   display: grid;
   place-items: center;
-  box-shadow: 0 10px 18px rgba(0, 0, 0, 0.18);
 }
+
+.dpad button[data-dir="up"] { top: 0; left: 48px; }
+.dpad button[data-dir="left"] { top: 48px; left: 0; }
+.dpad button[data-dir="down"] { top: 96px; left: 48px; }
+.dpad button[data-dir="right"] { top: 48px; left: 96px; }
 
 .mobile-actions {
   width: 208px;

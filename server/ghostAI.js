@@ -40,7 +40,7 @@ export function updateGhostEntity(ghost, gameState, currentTime = now()) {
   const shouldStep = currentTime >= (ghost.ghostData.nextStepAt ?? 0);
   if (shouldStep && ghost.ghostData.wanderTarget) {
     const path = findPath(
-      { x: Math.floor(ghost.x), y: Math.floor(ghost.y) },
+      { x: ghost.x, y: ghost.y },
       ghost.ghostData.wanderTarget,
       {
         isWalkable: (x, y) => isWalkable(x, y),
@@ -51,7 +51,7 @@ export function updateGhostEntity(ghost, gameState, currentTime = now()) {
     const next = path[0];
     if (next) {
       const direction = getDirection(ghost, next);
-      const result = gameState.moveEntity(ghost.id, next.x + 0.5, next.y + 0.5, direction);
+      const result = gameState.moveEntity(ghost.id, next.x, next.y, direction);
       moved = result.ok;
     }
 
@@ -124,18 +124,16 @@ function pickWanderTarget(ghost, nearestLive) {
     return randomWalkableTileNear(ghost.x, ghost.y, 6);
   }
   if (roll < 0.9 && nearestLive) {
-    return { x: Math.floor(nearestLive.x), y: Math.floor(nearestLive.y) };
+    return { x: nearestLive.x, y: nearestLive.y };
   }
   return MAP_CENTER;
 }
 
 function randomWalkableTileNear(x, y, radius) {
-  const originX = Math.floor(x);
-  const originY = Math.floor(y);
   for (let attempt = 0; attempt < 24; attempt += 1) {
     const candidate = {
-      x: clamp(originX + Math.floor((Math.random() * (radius * 2 + 1)) - radius), 1, MAP_WIDTH - 2),
-      y: clamp(originY + Math.floor((Math.random() * (radius * 2 + 1)) - radius), 1, MAP_HEIGHT - 2)
+      x: clamp(x + Math.floor((Math.random() * (radius * 2 + 1)) - radius), 1, MAP_WIDTH - 2),
+      y: clamp(y + Math.floor((Math.random() * (radius * 2 + 1)) - radius), 1, MAP_HEIGHT - 2)
     };
     if (isWalkable(candidate.x, candidate.y)) {
       return candidate;

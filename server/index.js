@@ -90,7 +90,7 @@ app.get("/api/bootstrap", (_req, res) => {
       tooltipRange: 3
     },
     rateLimits: {
-      moves: { max: 60, windowMs: 1000 },
+      moves: { max: 20, windowMs: 1000 },
       chat: { max: 5, windowMs: 10_000, cooldownMs: 30_000 },
       emote: { max: 3, windowMs: 5000, cooldownMs: 10_000 }
     },
@@ -288,7 +288,7 @@ wss.on("connection", (ws, request) => {
     gameState.setHeartbeat(player.id);
 
     if (isBinary) {
-      if (rawMessage.length !== 7) {
+      if (rawMessage.length !== 4) {
         return;
       }
 
@@ -310,14 +310,14 @@ wss.on("connection", (ws, request) => {
         return;
       }
 
-      const result = gameState.moveEntity(player.id, decoded.x, decoded.y, decoded.angle);
+      const result = gameState.moveEntity(player.id, decoded.x, decoded.y, decoded.direction);
       if (!result.ok) {
         sendJson(ws, {
           type: "move_rejected",
           reason: result.reason,
           x: currentPlayer.x,
           y: currentPlayer.y,
-          angle: currentPlayer.angle ?? 0
+          direction: currentPlayer.direction
         });
       } else {
         handleTokenCollection(result.player);

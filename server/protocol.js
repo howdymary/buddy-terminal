@@ -1,24 +1,30 @@
 import { MAP_HEIGHT, MAP_WIDTH } from "./collisionMap.js";
 
+const DIRECTION_TO_CODE = {
+  down: 0,
+  up: 1,
+  left: 2,
+  right: 3
+};
+
+const CODE_TO_DIRECTION = ["down", "up", "left", "right"];
+
 export const MESSAGE_TYPES = {
   MOVE: 0x01,
   BATCH: 0x02
 };
 
-const POSITION_SCALE = 100;
-const ANGLE_SCALE = 1000;
-
 export function encodeBatch(moves) {
-  const buffer = Buffer.alloc(3 + moves.length * 8);
+  const buffer = Buffer.alloc(3 + moves.length * 5);
   buffer.writeUInt8(MESSAGE_TYPES.BATCH, 0);
   buffer.writeUInt16BE(moves.length, 1);
 
   moves.forEach((move, index) => {
-    const offset = 3 + index * 8;
+    const offset = 3 + index * 5;
     buffer.writeUInt16BE(move.playerIndex, offset);
-    buffer.writeUInt16BE(encodePosition(move.x), offset + 2);
-    buffer.writeUInt16BE(encodePosition(move.y), offset + 4);
-    buffer.writeUInt16BE(encodeAngle(move.angle ?? 0), offset + 6);
+    buffer.writeUInt8(move.x, offset + 2);
+    buffer.writeUInt8(move.y, offset + 3);
+    buffer.writeUInt8(DIRECTION_TO_CODE[move.direction] ?? 0, offset + 4);
   });
 
   return buffer;
@@ -26,7 +32,7 @@ export function encodeBatch(moves) {
 
 export function decodeMove(buffer) {
   const view = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
-  if (view.length !== 7) {
+  if (view.length !== 4) {
     return null;
   }
 
@@ -34,8 +40,8 @@ export function decodeMove(buffer) {
     return null;
   }
 
-  const x = view.readUInt16BE(1) / POSITION_SCALE;
-  const y = view.readUInt16BE(3) / POSITION_SCALE;
+  const x = view.readUInt8(1);
+  const y = view.readUInt8(2);
   if (x >= MAP_WIDTH || y >= MAP_HEIGHT) {
     return null;
   }
@@ -43,23 +49,6 @@ export function decodeMove(buffer) {
   return {
     x,
     y,
-    angle: decodeAngle(view.readUInt16BE(5))
+    direction: CODE_TO_DIRECTION[view.readUInt8(3)] ?? "down"
   };
-}
-
-function encodePosition(value) {
-  return Math.max(0, Math.min(65535, Math.round(value * POSITION_SCALE)));
-}
-
-function encodeAngle(value) {
-  return Math.max(0, Math.min(65535, Math.round(normalizeAngle(value) * ANGLE_SCALE)));
-}
-
-function decodeAngle(value) {
-  return normalizeAngle(value / ANGLE_SCALE);
-}
-
-function normalizeAngle(angle) {
-  const fullTurn = Math.PI * 2;
-  return ((angle % fullTurn) + fullTurn) % fullTurn;
 }

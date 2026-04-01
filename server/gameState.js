@@ -7,7 +7,6 @@ import { createPlayerRateLimits } from "./rateLimiter.js";
 import { SpatialGrid } from "./spatialGrid.js";
 
 const SPAWN_RADIUS = 5;
-const PLAYER_RADIUS = 0.24;
 const monoNow = () => performance.now();
 
 function generateToken() {
@@ -88,7 +87,7 @@ export class GameState {
       session,
       x: spawn.x,
       y: spawn.y,
-      angle: Math.PI / 2
+      direction: "down"
     });
 
     this.playerIndexCounter += 1;
@@ -114,8 +113,7 @@ export class GameState {
       y: restorePoint.y,
       renderX: restorePoint.x,
       renderY: restorePoint.y,
-      angle: normalizeAngle(record.angle ?? angleFromDirection(record.direction || "down")),
-      direction: directionFromAngle(record.angle ?? angleFromDirection(record.direction || "down")),
+      direction: record.direction || "down",
       spriteType: record.spriteHash ? "custom" : "default",
       spriteRef: record.spriteRef,
       spriteHash: record.spriteHash,
@@ -187,8 +185,6 @@ export class GameState {
     entity.identityKey = session.identityKey;
     entity.lastHeartbeat = monoNow();
     entity.lastUpdate = Date.now();
-    entity.angle = normalizeAngle(entity.angle ?? angleFromDirection(entity.direction ?? "down"));
-    entity.direction = directionFromAngle(entity.angle);
     entity.chatMessage = "";
     entity.chatExpiresAt = 0;
     entity.emote = "";
@@ -297,38 +293,33 @@ export class GameState {
     )) ?? null;
   }
 
-  moveEntity(id, nextX, nextY, facing = 0) {
+  moveEntity(id, nextX, nextY, direction) {
     const entity = this.players.get(id);
     if (!entity) {
       return { ok: false, reason: "missing_player" };
     }
 
-    const angle = typeof facing === "number"
-      ? normalizeAngle(facing)
-      : angleFromDirection(facing);
-
-    if (!hasMovementClearance(nextX, nextY, PLAYER_RADIUS)) {
+    if (!isWalkable(nextX, nextY)) {
       return { ok: false, reason: "blocked" };
     }
 
-    const nearbyIds = this.grid.getNeighborPlayerIds(nextX, nextY);
+    const nearbyIds = this.grid.getPlayersInCell(nextX, nextY);
     for (const otherId of nearbyIds) {
       if (otherId === id) {
         continue;
       }
 
       const other = this.players.get(otherId);
-      if (other && !other.isSleeping && Math.hypot(other.x - nextX, other.y - nextY) < PLAYER_RADIUS * 2) {
+      if (other && !other.isSleeping && other.x === nextX && other.y === nextY) {
         return { ok: false, reason: "occupied" };
       }
     }
 
-    entity.x = roundPosition(nextX);
-    entity.y = roundPosition(nextY);
-    entity.angle = angle;
-    entity.direction = directionFromAngle(angle);
+    entity.x = nextX;
+    entity.y = nextY;
+    entity.direction = direction;
     entity.lastUpdate = Date.now();
-    this.grid.addOrUpdatePlayer(id, entity.x, entity.y);
+    this.grid.addOrUpdatePlayer(id, nextX, nextY);
     this.dirtyPlayers.add(id);
     return { ok: true, player: entity };
   }
@@ -394,16 +385,10 @@ export class GameState {
   }
 
   isOccupiedTile(x, y, ignoreId = null) {
-    const nearbyIds = this.grid.getNeighborPlayerIds(x + 0.5, y + 0.5);
+    const nearbyIds = this.grid.getPlayersInCell(x, y);
     for (const entityId of nearbyIds) {
       const entity = this.players.get(entityId);
-      if (
-        entity &&
-        !entity.isSleeping &&
-        entity.id !== ignoreId &&
-        Math.floor(entity.x) === x &&
-        Math.floor(entity.y) === y
-      ) {
+      if (entity && !entity.isSleeping && entity.id !== ignoreId && entity.x === x && entity.y === y) {
         return true;
       }
     }
@@ -417,7 +402,6 @@ export class GameState {
       name: entity.name,
       x: entity.x,
       y: entity.y,
-      angle: entity.angle ?? 0,
       direction: entity.direction,
       spriteType: entity.spriteType,
       spriteRef: entity.spriteRef,
@@ -458,8 +442,7 @@ export class GameState {
     return Array.from(this.players.values()).filter((entity) => !entity.isGhost && entity.isConnected && entity.ws);
   }
 
-  buildLiveEntity({ id, playerIndex, ws, session, x, y, angle = 0 }) {
-    const normalizedAngle = normalizeAngle(angle);
+  buildLiveEntity({ id, playerIndex, ws, session, x, y, direction }) {
     return {
       id,
       playerIndex,
@@ -468,8 +451,7 @@ export class GameState {
       y,
       renderX: x,
       renderY: y,
-      angle: normalizedAngle,
-      direction: directionFromAngle(normalizedAngle),
+      direction,
       spriteType: session.spriteType,
       spriteRef: session.spriteRef,
       spriteHash: session.spriteHash,
@@ -505,66 +487,18 @@ function findSafeSpawn(players) {
     const x = SPAWN_POINT.x + Math.floor(Math.random() * SPAWN_RADIUS * 2) - SPAWN_RADIUS;
     const y = SPAWN_POINT.y + Math.floor(Math.random() * SPAWN_RADIUS * 2) - SPAWN_RADIUS;
     if (isWalkable(x, y) && !isOccupied(x, y, players)) {
-      return { x: x + 0.5, y: y + 0.5 };
+      return { x, y };
     }
   }
 
-  return { x: SPAWN_POINT.x + 0.5, y: SPAWN_POINT.y + 0.5 };
+  return { x: SPAWN_POINT.x, y: SPAWN_POINT.y };
 }
 
 function isOccupied(x, y, players) {
   for (const entity of players.values()) {
-    if (!entity.isSleeping && Math.floor(entity.x) === x && Math.floor(entity.y) === y) {
+    if (!entity.isSleeping && entity.x === x && entity.y === y) {
       return true;
     }
   }
   return false;
-}
-
-function hasMovementClearance(x, y, radius) {
-  const corners = [
-    [x - radius, y - radius],
-    [x + radius, y - radius],
-    [x - radius, y + radius],
-    [x + radius, y + radius]
-  ];
-
-  return corners.every(([cornerX, cornerY]) => isWalkable(cornerX, cornerY));
-}
-
-function directionFromAngle(angle) {
-  const normalized = normalizeAngle(angle);
-  if (normalized >= Math.PI * 0.25 && normalized < Math.PI * 0.75) {
-    return "down";
-  }
-  if (normalized >= Math.PI * 0.75 && normalized < Math.PI * 1.25) {
-    return "left";
-  }
-  if (normalized >= Math.PI * 1.25 && normalized < Math.PI * 1.75) {
-    return "up";
-  }
-  return "right";
-}
-
-function angleFromDirection(direction) {
-  switch (direction) {
-    case "up":
-      return Math.PI * 1.5;
-    case "left":
-      return Math.PI;
-    case "right":
-      return 0;
-    case "down":
-    default:
-      return Math.PI * 0.5;
-  }
-}
-
-function normalizeAngle(angle) {
-  const fullTurn = Math.PI * 2;
-  return ((angle % fullTurn) + fullTurn) % fullTurn;
-}
-
-function roundPosition(value) {
-  return Math.round(value * 1000) / 1000;
 }

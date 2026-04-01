@@ -64,7 +64,7 @@ export function startTickLoop({
             playerIndex: entity.playerIndex,
             x: entity.x,
             y: entity.y,
-            angle: entity.angle ?? 0
+            direction: entity.direction
           }));
 
         if (

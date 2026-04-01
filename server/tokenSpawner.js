@@ -9,8 +9,7 @@ const TOKEN_CONFIG = {
   maxActiveLines: 6,
   respawnDelayMs: 30_000,
   maxSpawnAttempts: 40,
-  initialLines: 3,
-  collectRadius: 0.8
+  initialLines: 3
 };
 
 const CARDINALS = [
@@ -75,7 +74,7 @@ export class TokenSpawner {
       return null;
     }
 
-    const token = this.findNearestToken(x, y, TOKEN_CONFIG.collectRadius);
+    const token = this.findTokenAt(x, y);
     if (!token || token._collecting) {
       return null;
     }
@@ -182,23 +181,6 @@ export class TokenSpawner {
       }
     }
     return null;
-  }
-
-  findNearestToken(x, y, maxDistance) {
-    let best = null;
-    let bestDistance = maxDistance;
-
-    for (const token of this.tokens.values()) {
-      const tokenCenterX = token.x + 0.5;
-      const tokenCenterY = token.y + 0.5;
-      const distance = Math.hypot(tokenCenterX - x, tokenCenterY - y);
-      if (distance < bestDistance) {
-        best = token;
-        bestDistance = distance;
-      }
-    }
-
-    return best;
   }
 }
 
