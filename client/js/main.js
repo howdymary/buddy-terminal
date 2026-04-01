@@ -152,7 +152,28 @@ function handleNetworkJson(message) {
       const player = state.players.get(message.playerId || message.ghostId);
       if (player) {
         player.isGhost = false;
+        player.isSleeping = false;
+        player.ghostTransition = null;
         setBubble(player.id, "I'm back! 👋", "chat");
+      }
+      break;
+    }
+    case "ghost_sleep": {
+      const player = state.players.get(message.id);
+      if (player) {
+        setGhostSleepState(player, true, message.fadeDuration ?? 3000);
+      }
+      break;
+    }
+    case "ghost_wake_ambient": {
+      const player = state.players.get(message.id);
+      if (player) {
+        player.isGhost = true;
+        player.x = message.x ?? player.x;
+        player.y = message.y ?? player.y;
+        player.renderX = player.x;
+        player.renderY = player.y;
+        setGhostSleepState(player, false, message.fadeDuration ?? 2000);
       }
       break;
     }
@@ -305,7 +326,9 @@ function upsertPlayer(data) {
       buddyMeta: data.buddyMeta,
       isGhost: Boolean(data.isGhost),
       isDormant: Boolean(data.isDormant),
+      isSleeping: Boolean(data.isSleeping),
       ghostData: data.ghostData,
+      ghostTransition: null,
       activeBubble: null,
       tokenCount: data.tokenCount || 0,
       isLocal: data.id === state.localPlayerId
@@ -323,11 +346,23 @@ function upsertPlayer(data) {
     player.buddyMeta = data.buddyMeta;
     player.isGhost = Boolean(data.isGhost);
     player.isDormant = Boolean(data.isDormant);
+    player.isSleeping = Boolean(data.isSleeping);
     player.ghostData = data.ghostData;
     player.tokenCount = data.tokenCount || 0;
   }
 
   player.isLocal = data.id === state.localPlayerId;
+  if (!player.isGhost) {
+    player.isSleeping = false;
+    player.ghostTransition = null;
+  } else if (!player.ghostTransition) {
+    player.ghostTransition = {
+      from: player.isSleeping ? 0 : 1,
+      to: player.isSleeping ? 0 : 1,
+      startedAt: performance.now(),
+      durationMs: 1
+    };
+  }
   state.playerIndexToId.set(data.playerIndex, data.id);
 
   if (data.chatMessage) {
@@ -509,7 +544,26 @@ function setupChatControls() {
       return;
     }
 
-    state.network?.sendChat(text);
+    console.info("[CHAT] Sending message:", text);
+
+    if (!state.network?.isOpen()) {
+      console.error("[CHAT] WebSocket not connected");
+      state.chatPanel.addNotice("Not connected to the world yet. Try again in a moment.");
+      return;
+    }
+
+    const sent = state.network.sendChat(text);
+    if (!sent) {
+      console.error("[CHAT] Failed to send message");
+      state.chatPanel.addNotice("Couldn't send chat right now. Connection looks sleepy.");
+      return;
+    }
+
+    if (state.localPlayerId) {
+      setBubble(state.localPlayerId, text, "chat");
+    }
+
+    console.info("[CHAT] Message sent to server");
     chatInput.value = "";
     updateCounter();
     closeChat();
@@ -713,7 +767,7 @@ function isWalkableLocal(x, y, selfId) {
   }
 
   for (const player of state.players.values()) {
-    if (player.id !== selfId && player.x === x && player.y === y) {
+    if (!player.isSleeping && player.id !== selfId && player.x === x && player.y === y) {
       return false;
     }
   }
@@ -726,7 +780,7 @@ function getNearestOtherPlayer(localPlayer) {
   let bestDistance = Number.POSITIVE_INFINITY;
 
   for (const player of state.players.values()) {
-    if (player.id === localPlayer.id) {
+    if (player.id === localPlayer.id || player.isSleeping) {
       continue;
     }
 
@@ -748,7 +802,7 @@ function getHoveredSceneTargets(mouseX, mouseY) {
   const tileSize = state.renderer.tilePixels;
 
   for (const player of state.players.values()) {
-    if (player.id === state.localPlayerId) {
+    if (player.id === state.localPlayerId || player.isSleeping) {
       continue;
     }
 
@@ -817,4 +871,19 @@ function announce(text) {
   window.setTimeout(() => {
     announcer.textContent = text;
   }, 20);
+}
+
+function setGhostSleepState(player, isSleeping, fadeDuration = 0) {
+  if (!player) {
+    return;
+  }
+
+  const visibility = state.renderer?.ghostRenderer.getVisibility(player) ?? (player.isSleeping ? 0 : 1);
+  player.isSleeping = isSleeping;
+  player.ghostTransition = {
+    from: visibility,
+    to: isSleeping ? 0 : 1,
+    startedAt: performance.now(),
+    durationMs: Math.max(1, fadeDuration)
+  };
 }

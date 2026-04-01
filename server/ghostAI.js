@@ -17,6 +17,10 @@ export function updateGhostEntity(ghost, gameState, currentTime = now()) {
     return { moved: false, chatted: null, becameDormant: false };
   }
 
+  if (ghost.isSleeping) {
+    return { moved: false, chatted: null, becameDormant: false };
+  }
+
   const nearestLive = findNearestLivePlayer(ghost, gameState);
   const distanceToLive = nearestLive ? manhattan(ghost, nearestLive) : Number.POSITIVE_INFINITY;
   const isDormant = distanceToLive > 15;
@@ -59,7 +63,8 @@ export function updateGhostEntity(ghost, gameState, currentTime = now()) {
     const phrase = pickGhostPhrase(ghost);
     const sanitized = sanitizeChatMessage(phrase);
     chatted = sanitized.ok ? sanitized.cleaned : phrase;
-    ghost.ghostData.nextSpeechAt = currentTime + 30_000 + Math.floor(Math.random() * 90_000);
+    ghost.ghostData.nextSpeechAt = currentTime + getGhostChatInterval(gameState.getGhostPlayers()
+      .filter((entity) => entity.isGhost && !entity.isSleeping).length);
     ghost.ghostData.lastSpoke = currentTime;
   }
 
@@ -67,7 +72,7 @@ export function updateGhostEntity(ghost, gameState, currentTime = now()) {
 }
 
 export function maybeReactToNearbyChat(ghost, speaker, now = performance.now()) {
-  if (!ghost.isGhost || ghost.isDormant) {
+  if (!ghost.isGhost || ghost.isDormant || ghost.isSleeping) {
     return null;
   }
 
@@ -99,6 +104,18 @@ export function maybeReactToNearbyChat(ghost, speaker, now = performance.now()) 
   }
 
   return null;
+}
+
+export function getGhostChatInterval(activeGhostCount) {
+  if (activeGhostCount <= 3) {
+    return 45_000 + Math.floor(Math.random() * 60_000);
+  }
+
+  if (activeGhostCount <= 10) {
+    return 60_000 + Math.floor(Math.random() * 120_000);
+  }
+
+  return 120_000 + Math.floor(Math.random() * 180_000);
 }
 
 function pickWanderTarget(ghost, nearestLive) {

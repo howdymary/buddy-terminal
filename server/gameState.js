@@ -134,6 +134,7 @@ export class GameState {
       isGhost: true,
       isConnected: false,
       isDormant: false,
+      isSleeping: false,
       disconnectPending: false,
       disconnectReason: null,
       disconnectedAt: null,
@@ -169,6 +170,7 @@ export class GameState {
     entity.isGhost = false;
     entity.isConnected = true;
     entity.isDormant = false;
+    entity.isSleeping = false;
     entity.disconnectPending = false;
     entity.disconnectReason = null;
     entity.disconnectedAt = null;
@@ -222,6 +224,7 @@ export class GameState {
     entity.isConnected = false;
     entity.disconnectPending = false;
     entity.isDormant = false;
+    entity.isSleeping = false;
     entity.ghostData = {
       originalPlayerId: entity.id,
       createdAt: new Date().toISOString(),
@@ -270,6 +273,10 @@ export class GameState {
     return Array.from(this.players.values()).filter((entity) => !entity.isGhost && entity.isConnected);
   }
 
+  getGhostPlayers() {
+    return Array.from(this.players.values()).filter((entity) => entity.isGhost);
+  }
+
   getTimedOutPlayers(timeoutMs = 30_000) {
     const currentTime = monoNow();
     return Array.from(this.players.values()).filter((entity) => (
@@ -303,7 +310,7 @@ export class GameState {
       }
 
       const other = this.players.get(otherId);
-      if (other && other.x === nextX && other.y === nextY) {
+      if (other && !other.isSleeping && other.x === nextX && other.y === nextY) {
         return { ok: false, reason: "occupied" };
       }
     }
@@ -334,6 +341,7 @@ export class GameState {
     entity.chatMessage = message;
     entity.chatExpiresAt = Date.now() + durationMs;
     entity.lastUpdate = Date.now();
+    this.dirtyPlayers.add(id);
     return entity;
   }
 
@@ -346,6 +354,7 @@ export class GameState {
     entity.emote = emote;
     entity.emoteExpiresAt = Date.now() + durationMs;
     entity.lastUpdate = Date.now();
+    this.dirtyPlayers.add(id);
     return entity;
   }
 
@@ -365,10 +374,12 @@ export class GameState {
       if (entity.chatExpiresAt && entity.chatExpiresAt <= now) {
         entity.chatMessage = "";
         entity.chatExpiresAt = 0;
+        this.dirtyPlayers.add(entity.id);
       }
       if (entity.emoteExpiresAt && entity.emoteExpiresAt <= now) {
         entity.emote = "";
         entity.emoteExpiresAt = 0;
+        this.dirtyPlayers.add(entity.id);
       }
     }
   }
@@ -377,7 +388,7 @@ export class GameState {
     const nearbyIds = this.grid.getPlayersInCell(x, y);
     for (const entityId of nearbyIds) {
       const entity = this.players.get(entityId);
-      if (entity && entity.id !== ignoreId && entity.x === x && entity.y === y) {
+      if (entity && !entity.isSleeping && entity.id !== ignoreId && entity.x === x && entity.y === y) {
         return true;
       }
     }
@@ -402,6 +413,7 @@ export class GameState {
       emote: entity.emote,
       isGhost: Boolean(entity.isGhost),
       isDormant: Boolean(entity.isDormant),
+      isSleeping: Boolean(entity.isSleeping),
       ghostData: entity.isGhost ? entity.ghostData : null,
       tokenCount: entity.tokenCount ?? 0
     };
@@ -450,6 +462,7 @@ export class GameState {
       isGhost: false,
       isConnected: true,
       isDormant: false,
+      isSleeping: false,
       disconnectPending: false,
       disconnectReason: null,
       disconnectedAt: null,
@@ -483,7 +496,7 @@ function findSafeSpawn(players) {
 
 function isOccupied(x, y, players) {
   for (const entity of players.values()) {
-    if (entity.x === x && entity.y === y) {
+    if (!entity.isSleeping && entity.x === x && entity.y === y) {
       return true;
     }
   }

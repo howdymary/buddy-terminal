@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { performance } from "node:perf_hooks";
 
 import { sanitizeChatMessage } from "./chatFilter.js";
-import { maybeReactToNearbyChat, updateGhostEntity } from "./ghostAI.js";
+import { getGhostChatInterval, maybeReactToNearbyChat, updateGhostEntity } from "./ghostAI.js";
 import { getGhostPersonality } from "./phrasePools.js";
 
 const DISCONNECT_GRACE_MS = 10_000;
@@ -10,6 +10,14 @@ const TOMBSTONE_LIFETIME_MS = 24 * 60 * 60 * 1000;
 const ACTIVE_GHOST_LIMIT = 200;
 const GHOST_HARD_CAP = 500;
 const GHOST_SAVE_INTERVAL_MS = 5000;
+const GHOST_DENSITY_UPDATE_MS = 10_000;
+const GHOST_DENSITY = {
+  targetPopulation: 15,
+  minGhosts: 2,
+  maxGhosts: 30,
+  rampDownSpeed: 2,
+  rampUpSpeed: 3
+};
 const now = () => performance.now();
 
 /**
@@ -31,6 +39,7 @@ export class GhostManager {
     this.pendingTransitions = new Map();
     this.dirtyGhostIds = new Set();
     this.lastGhostSaveAt = now();
+    this.lastDensityUpdateAt = -GHOST_DENSITY_UPDATE_MS;
   }
 
   hydrate() {
@@ -128,8 +137,24 @@ export class GhostManager {
     }
   }
 
-  updateGhosts({ now: currentTime = now(), onGhostChat, onGhostEmote, onGhostEvicted }) {
-    const ghosts = Array.from(this.gameState.players.values()).filter((entity) => entity.isGhost);
+  updateGhosts({
+    now: currentTime = now(),
+    onGhostChat,
+    onGhostEmote,
+    onGhostEvicted,
+    onGhostSleep,
+    onGhostWakeAmbient
+  }) {
+    if (currentTime - this.lastDensityUpdateAt >= GHOST_DENSITY_UPDATE_MS) {
+      this.rebalanceGhostDensity(currentTime, {
+        onGhostSleep,
+        onGhostWakeAmbient
+      });
+      this.lastDensityUpdateAt = currentTime;
+    }
+
+    const ghosts = this.gameState.getGhostPlayers();
+    const activeGhostCount = ghosts.filter((entity) => !entity.isSleeping).length;
 
     for (const ghost of ghosts) {
       const { moved, chatted, becameDormant } = updateGhostEntity(ghost, this.gameState, currentTime);
@@ -168,7 +193,7 @@ export class GhostManager {
       onGhostEvicted?.(eviction);
     });
 
-    return ghosts.length;
+    return activeGhostCount;
   }
 
   reactToNearbyChat(sourcePlayer, { onGhostChat, onGhostEmote }) {
@@ -248,6 +273,65 @@ export class GhostManager {
   markGhostDirty(id) {
     this.dirtyGhostIds.add(id);
   }
+
+  rebalanceGhostDensity(currentTime, { onGhostSleep, onGhostWakeAmbient }) {
+    const livePlayers = this.gameState.getLivePlayers();
+    const ghosts = this.gameState.getGhostPlayers();
+    const activeGhosts = ghosts.filter((ghost) => !ghost.isSleeping);
+    const targetGhosts = clamp(
+      GHOST_DENSITY.targetPopulation - livePlayers.length,
+      GHOST_DENSITY.minGhosts,
+      GHOST_DENSITY.maxGhosts
+    );
+
+    if (activeGhosts.length > targetGhosts) {
+      const toSleep = Math.min(activeGhosts.length - targetGhosts, GHOST_DENSITY.rampDownSpeed);
+      const ghostsToSleep = pickGhostsToSleep(activeGhosts, livePlayers, toSleep);
+      ghostsToSleep.forEach((ghost) => this.sleepGhost(ghost, currentTime, onGhostSleep));
+      return;
+    }
+
+    if (activeGhosts.length < targetGhosts) {
+      const toWake = Math.min(targetGhosts - activeGhosts.length, GHOST_DENSITY.rampUpSpeed);
+      const sleepingGhosts = ghosts.filter((ghost) => ghost.isSleeping);
+      const ghostsToWake = pickGhostsToWake(sleepingGhosts, livePlayers, toWake);
+      ghostsToWake.forEach((ghost) => this.wakeGhost(ghost, currentTime, activeGhosts.length, onGhostWakeAmbient));
+    }
+  }
+
+  sleepGhost(ghost, currentTime, onGhostSleep) {
+    if (!ghost || ghost.isSleeping) {
+      return;
+    }
+
+    ghost.isSleeping = true;
+    ghost.isDormant = true;
+    ghost.chatMessage = "";
+    ghost.chatExpiresAt = 0;
+    ghost.emote = "";
+    ghost.emoteExpiresAt = 0;
+    ghost.lastUpdate = Date.now();
+    ghost.ghostData.nextDecisionAt = currentTime + 10_000;
+    ghost.ghostData.nextStepAt = currentTime + 10_000;
+    ghost.ghostData.nextSpeechAt = currentTime + getGhostChatInterval(0);
+    this.markGhostDirty(ghost.id);
+    onGhostSleep?.(ghost, 3000);
+  }
+
+  wakeGhost(ghost, currentTime, activeGhostCount, onGhostWakeAmbient) {
+    if (!ghost || !ghost.isSleeping) {
+      return;
+    }
+
+    ghost.isSleeping = false;
+    ghost.isDormant = false;
+    ghost.lastUpdate = Date.now();
+    ghost.ghostData.nextDecisionAt = currentTime + 800 + Math.floor(Math.random() * 1200);
+    ghost.ghostData.nextStepAt = currentTime + 250;
+    ghost.ghostData.nextSpeechAt = currentTime + getGhostChatInterval(Math.max(1, activeGhostCount + 1));
+    this.markGhostDirty(ghost.id);
+    onGhostWakeAmbient?.(ghost, 2000);
+  }
 }
 
 function capitalize(value) {
@@ -255,4 +339,38 @@ function capitalize(value) {
     .split(" ")
     .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
     .join(" ");
+}
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function pickGhostsToSleep(activeGhosts, livePlayers, count) {
+  return activeGhosts
+    .slice()
+    .sort((left, right) => nearestLiveDistance(right, livePlayers) - nearestLiveDistance(left, livePlayers))
+    .slice(0, count);
+}
+
+function pickGhostsToWake(sleepingGhosts, livePlayers, count) {
+  return sleepingGhosts
+    .slice()
+    .sort((left, right) => nearestLiveDistance(left, livePlayers) - nearestLiveDistance(right, livePlayers))
+    .slice(0, count);
+}
+
+function nearestLiveDistance(ghost, livePlayers) {
+  if (!livePlayers.length) {
+    return 0;
+  }
+
+  let best = Number.POSITIVE_INFINITY;
+  for (const player of livePlayers) {
+    const distance = Math.abs(player.x - ghost.x) + Math.abs(player.y - ghost.y);
+    if (distance < best) {
+      best = distance;
+    }
+  }
+
+  return best;
 }

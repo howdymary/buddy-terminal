@@ -24,6 +24,8 @@ export function startTickLoop({
   onTimeoutPlayers,
   onGhostChat,
   onGhostEmote,
+  onGhostSleep,
+  onGhostWakeAmbient,
   onGhostEvicted,
   onTokensSpawned
 }) {
@@ -43,6 +45,8 @@ export function startTickLoop({
       now: currentTime,
       onGhostChat,
       onGhostEmote,
+      onGhostSleep,
+      onGhostWakeAmbient,
       onGhostEvicted
     });
 

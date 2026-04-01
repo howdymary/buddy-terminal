@@ -5,6 +5,9 @@ import {
   loadSpriteSheetAsset
 } from "./spriteGen.js";
 
+const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
+const SUPPORTED_UPLOAD_TYPES = new Set(["image/png", "image/jpeg", "image/gif"]);
+
 const NAME_ADJECTIVES = [
   "Wandering",
   "Cosmic",
@@ -60,6 +63,7 @@ export class OnboardingController {
       localWorldSpriteSheet: null,
       processedUpload: null,
       processedUploadPromise: null,
+      isProcessingUpload: false,
       previewBuddies: [],
       previewTick: 0,
       isEntering: false
@@ -110,7 +114,12 @@ export class OnboardingController {
         return;
       }
 
-      await this.selectUploadedFile(file);
+      await this.handleUploadSelection(file, "file picker");
+    });
+
+    this.elements.uploadDropzone.addEventListener("dragenter", (event) => {
+      event.preventDefault();
+      this.elements.uploadDropzone.classList.add("dragover");
     });
 
     this.elements.uploadDropzone.addEventListener("dragover", (event) => {
@@ -130,7 +139,7 @@ export class OnboardingController {
         return;
       }
 
-      await this.selectUploadedFile(file);
+      await this.handleUploadSelection(file, "drag and drop");
     });
 
     this.elements.uploadDropzone.addEventListener("click", () => {
@@ -150,7 +159,7 @@ export class OnboardingController {
       }
 
       event.preventDefault();
-      await this.selectUploadedFile(file);
+      await this.handleUploadSelection(file, "clipboard paste");
     });
 
     this.elements.helperButton.addEventListener("click", () => {
@@ -213,6 +222,7 @@ export class OnboardingController {
     this.state.uploadedFile = null;
     this.state.processedUpload = null;
     this.state.processedUploadPromise = null;
+    this.state.isProcessingUpload = false;
     this.state.localSpriteSheet = await buildSpriteSheetFromUrl(buddy.url);
     this.state.localWorldSpriteSheet = this.state.localSpriteSheet;
 
@@ -227,21 +237,47 @@ export class OnboardingController {
     this.drawPreviewSprite();
   }
 
+  async handleUploadSelection(file, source = "upload") {
+    console.info("[UPLOAD] File received from", source, file?.name, file?.type, file?.size);
+
+    try {
+      await this.selectUploadedFile(file);
+    } catch (error) {
+      this.state.isProcessingUpload = false;
+      console.error("[UPLOAD] Selection failed", error);
+      this.setUploadStatus(
+        error.message || "❌ Couldn't read that image. Try a PNG, JPG, or GIF under 2MB.",
+        true
+      );
+      this.updateEnterState();
+    } finally {
+      this.elements.fileInput.value = "";
+      this.elements.uploadDropzone.classList.remove("dragover");
+    }
+  }
+
   async selectUploadedFile(file) {
+    const validationError = validateUploadFile(file);
+    if (validationError) {
+      throw new Error(validationError);
+    }
+
     this.state.uploadedFile = file;
     this.state.selectedDefaultBuddy = null;
     this.state.processedUpload = null;
     this.state.processedUploadPromise = null;
-    this.state.localSpriteSheet = await buildSpriteSheetFromFile(file);
-    this.state.localWorldSpriteSheet = this.state.localSpriteSheet;
+    this.state.isProcessingUpload = true;
+    this.setUploadStatus(`⏳ Processing ${file.name}...`);
+    this.renderBuddyMeta(null);
+    this.updateEnterState();
 
     for (const button of this.elements.defaultBuddyGrid.querySelectorAll(".default-buddy-button")) {
       button.classList.remove("selected");
     }
 
-    this.setUploadStatus("⏳ Analyzing your buddy card...");
-    this.renderBuddyMeta(null);
-    this.updateEnterState();
+    this.state.localSpriteSheet = await buildSpriteSheetFromFile(file);
+    this.state.localWorldSpriteSheet = this.state.localSpriteSheet;
+    console.info("[UPLOAD] Local preview sprite generated");
     this.drawPreviewSprite();
 
     const currentFile = file;
@@ -253,24 +289,31 @@ export class OnboardingController {
 
         this.state.processedUpload = processed;
         this.state.localWorldSpriteSheet = await loadSpriteSheetAsset(processed.spriteUrl);
+        this.state.isProcessingUpload = false;
         this.renderBuddyMeta(processed.buddyMeta, processed.hasRealBuddy);
         this.setUploadStatus(
           processed.hasRealBuddy
             ? `Parsed ${processed.buddyMeta?.rarityLabel || "rare"} ${processed.buddyMeta?.species || "buddy"} aura.`
             : "Custom upload ready. No rarity aura detected, but your sprite is good to go."
         );
+        this.drawPreviewSprite();
+        this.updateEnterState();
         return processed;
       })
       .catch((error) => {
         this.state.processedUploadPromise = null;
+        this.state.isProcessingUpload = false;
         if (this.state.uploadedFile === currentFile) {
           this.setUploadStatus(
             error.message || "❌ Couldn't read that image. Try a cleaner screenshot, or pick a default buddy below.",
             true
           );
+          this.updateEnterState();
         }
         throw error;
       });
+
+    return this.state.processedUploadPromise;
   }
 
   getResolvedName() {
@@ -281,12 +324,22 @@ export class OnboardingController {
   }
 
   canEnter() {
-    return Boolean(this.getResolvedName()) && Boolean(this.state.localSpriteSheet) && !this.state.isEntering;
+    const hasDefaultBuddy = Boolean(this.state.selectedDefaultBuddy) && Boolean(this.state.localSpriteSheet);
+    const hasUploadedBuddy = Boolean(this.state.uploadedFile) && Boolean(this.state.processedUpload);
+    return Boolean(this.getResolvedName()) &&
+      (hasDefaultBuddy || hasUploadedBuddy) &&
+      !this.state.isEntering &&
+      !this.state.isProcessingUpload;
   }
 
   updateEnterState() {
     const canEnter = this.canEnter();
     this.elements.enterWorldButton.disabled = !canEnter;
+    if (this.state.isProcessingUpload) {
+      this.elements.enterStatus.textContent = "Analyzing your buddy card...";
+      return;
+    }
+
     this.elements.enterStatus.textContent = canEnter
       ? `Ready as ${this.getResolvedName()}`
       : "Choose a name and buddy to continue.";
@@ -358,22 +411,26 @@ export class OnboardingController {
     const formData = new FormData();
     formData.append("buddy", this.state.uploadedFile);
 
+    console.info("[UPLOAD] Sending buddy card to server...");
     this.state.processedUploadPromise = fetch("/api/process-sprite", {
       method: "POST",
       body: formData
     })
       .then(async (response) => {
+        console.info("[UPLOAD] Server response status", response.status);
         if (!response.ok) {
           const error = await response.json().catch(() => ({ error: "Sprite upload failed." }));
           throw new Error(error.error || "Sprite upload failed.");
         }
 
         const processed = await response.json();
+        console.info("[UPLOAD] Server processed sprite", processed.spriteUrl, processed.buddyMeta?.buddyName);
         this.state.processedUpload = processed;
         return processed;
       })
       .catch((error) => {
         this.state.processedUploadPromise = null;
+        console.error("[UPLOAD] Server processing failed", error);
         throw error;
       });
 
@@ -447,13 +504,14 @@ export class OnboardingController {
     const ctx = canvas.getContext("2d");
     ctx.imageSmoothingEnabled = false;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    if (!this.state.localSpriteSheet) {
+    const spriteSheet = this.state.localWorldSpriteSheet || this.state.localSpriteSheet;
+    if (!spriteSheet) {
       return;
     }
 
     const direction = ["down", "left", "right", "up"][Math.floor(this.state.previewTick / 50) % 4];
     const frame = Math.floor(this.state.previewTick / 18) % 2;
-    drawSpriteFrame(ctx, this.state.localSpriteSheet.sheet, direction, frame, 16, 16, 3);
+    drawSpriteFrame(ctx, spriteSheet.sheet, direction, frame, 16, 16, 3);
   }
 }
 
@@ -462,4 +520,20 @@ function generateFunName() {
   const animal = NAME_ANIMALS[Math.floor(Math.random() * NAME_ANIMALS.length)];
   const suffix = Math.floor(Math.random() * 90) + 10;
   return `${adjective}${animal}_${suffix}`;
+}
+
+function validateUploadFile(file) {
+  if (!file) {
+    return "Choose a PNG, JPG, or GIF buddy image before continuing.";
+  }
+
+  if (!SUPPORTED_UPLOAD_TYPES.has(file.type)) {
+    return "Please upload a PNG, JPG, or GIF image.";
+  }
+
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return "Image must be under 2MB.";
+  }
+
+  return null;
 }

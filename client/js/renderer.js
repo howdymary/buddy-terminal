@@ -380,15 +380,23 @@ export class Renderer {
   drawPlayers(players, localPlayerId, camera, hoveredPlayerId, auraEnabled) {
     const ctx = this.ctx;
     const localPlayer = players.get(localPlayerId);
+    const now = performance.now();
 
     for (const player of players.values()) {
+      const ghostVisibility = player.isGhost
+        ? this.ghostRenderer.getVisibility(player, now)
+        : 1;
+      if (player.isGhost && ghostVisibility <= 0.02) {
+        continue;
+      }
+
       const tileX = player.renderX * TILE_RENDER_SIZE - camera.x - TILE_RENDER_SIZE / 2;
       const tileY = player.renderY * TILE_RENDER_SIZE - camera.y - TILE_RENDER_SIZE;
       const spriteX = tileX;
-      const spriteY = tileY - TILE_RENDER_SIZE / 2 + this.ghostRenderer.getBobOffset(player);
+      const spriteY = tileY - TILE_RENDER_SIZE / 2 + this.ghostRenderer.getBobOffset(player, now);
       const spriteSize = TILE_RENDER_SIZE * 1.5;
       const isNear = localPlayer && player.id !== localPlayer.id && manhattanDistance(localPlayer, player) <= 1;
-      const frame = Math.floor(performance.now() / 180) % 2;
+      const frame = Math.floor(now / 180) % 2;
 
       if (isNear) {
         ctx.fillStyle = "rgba(242, 211, 106, 0.16)";
@@ -397,10 +405,17 @@ export class Renderer {
         ctx.fill();
       }
 
-      this.auraRenderer.draw(ctx, player, spriteX, spriteY, spriteSize, auraEnabled);
+      this.auraRenderer.draw(
+        ctx,
+        player,
+        spriteX,
+        spriteY,
+        spriteSize,
+        auraEnabled && !(player.isGhost && player.isSleeping)
+      );
 
       ctx.save();
-      this.ghostRenderer.applyGhostSpriteState(ctx, player);
+      this.ghostRenderer.applyGhostSpriteState(ctx, player, now);
       if (player.spriteSheet) {
         drawSpriteFrame(ctx, player.spriteSheet.sheet, player.direction, frame, spriteX, spriteY, 1.5);
       } else {
@@ -410,7 +425,7 @@ export class Renderer {
       ctx.restore();
 
       if (player.isGhost) {
-        this.ghostRenderer.drawGhostNameTag(ctx, player, tileX + TILE_RENDER_SIZE / 2, tileY + TILE_RENDER_SIZE + 18);
+        this.ghostRenderer.drawGhostNameTag(ctx, player, tileX + TILE_RENDER_SIZE / 2, tileY + TILE_RENDER_SIZE + 18, now);
       } else {
         this.drawNameTag(player.name, tileX + TILE_RENDER_SIZE / 2, tileY + TILE_RENDER_SIZE + 18, player.id === localPlayerId);
       }

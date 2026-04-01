@@ -413,6 +413,22 @@ startTickLoop({
       entry
     });
   },
+  onGhostSleep(ghost, fadeDuration) {
+    broadcastJsonToAll({
+      type: "ghost_sleep",
+      id: ghost.id,
+      fadeDuration
+    });
+  },
+  onGhostWakeAmbient(ghost, fadeDuration) {
+    broadcastJsonToAll({
+      type: "ghost_wake_ambient",
+      id: ghost.id,
+      x: ghost.x,
+      y: ghost.y,
+      fadeDuration
+    });
+  },
   onGhostEvicted(eviction) {
     handleGhostEviction(eviction);
   },

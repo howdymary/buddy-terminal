@@ -51,23 +51,24 @@ export class BuddyNetwork {
   }
 
   sendChat(message) {
-    this.sendJson({ type: "chat", message });
+    return this.sendJson({ type: "chat", message });
   }
 
   sendEmote(emote) {
-    this.sendJson({ type: "emote", emote });
+    return this.sendJson({ type: "emote", emote });
   }
 
   sendHeartbeat() {
-    this.sendJson({ type: "heartbeat" });
+    return this.sendJson({ type: "heartbeat" });
   }
 
   sendJson(payload) {
     if (!this.isOpen()) {
-      return;
+      return false;
     }
 
     this.ws.send(JSON.stringify(payload));
+    return true;
   }
 
   isOpen() {
