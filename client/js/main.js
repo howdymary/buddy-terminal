@@ -1,10 +1,9 @@
-import { Camera } from "./camera.js";
 import { ChatPanel } from "./chatPanel.js";
-import { InputController } from "./input.js";
+import { FirstPersonController } from "./fpController.js";
 import { stepRemotePlayers, applyRemoteMovement } from "./interpolation.js";
 import { BuddyNetwork } from "./network.js";
 import { OnboardingController } from "./onboarding.js";
-import { Renderer } from "./renderer.js";
+import { RaycastRenderer } from "./raycastRenderer.js";
 import { ClientSpriteCache } from "./spriteCache.js";
 import { buildSpriteSheetFromUrl, loadSpriteSheetAsset } from "./spriteGen.js";
 import { TokenHUD } from "./tokenHUD.js";
@@ -24,48 +23,39 @@ const state = {
   spriteCache: new ClientSpriteCache(),
   network: null,
   renderer: null,
-  camera: null,
-  input: null,
+  controller: null,
   chatPanel: null,
   tokenHud: null,
   chatOpen: false,
-  auraEnabled: false,
+  auraEnabled: true,
   heartbeatTimer: null,
-  hoveredPlayerId: null,
-  hoveredTombstoneId: null,
   blockedTiles: new Set(DEFAULT_BLOCKED_TILES),
   allowedEmotes: DEFAULT_ALLOWED_EMOTES,
-  rateLimits: null,
   hasSeenGhostExplainer: false,
-  hasSeenAuraWarning: false,
   tutorialBubble: {
     text: "",
     expiresAt: 0,
     visible: false
-  }
+  },
+  lastFrameAt: performance.now(),
+  lastMovementSentAt: 0,
+  lastSentState: null
 };
 
 init();
 
 async function init() {
   state.bootstrap = await fetchJson("/api/bootstrap");
-  state.renderer = new Renderer(document.getElementById("gameCanvas"));
-  state.camera = new Camera(window.innerWidth, window.innerHeight, state.renderer.tilePixels);
-  state.input = new InputController();
-  state.input.setCallbacks({
-    onToggleChat: toggleChat,
-    onCloseChat: closeChat,
-    onEmote: sendEmote,
-    onToggleChatPanel: toggleChatPanel,
-    onHelp: showControlsHelp,
-    isTextInputActive: () => state.chatOpen
+  state.renderer = new RaycastRenderer(document.getElementById("gameCanvas"));
+  state.controller = new FirstPersonController({
+    canvas: document.getElementById("gameCanvas"),
+    isChatting: () => state.chatOpen
   });
-  state.input.attach();
+  state.controller.attach();
 
   state.blockedTiles = new Set(state.bootstrap.blockedTiles || DEFAULT_BLOCKED_TILES);
   state.allowedEmotes = state.bootstrap.allowedEmotes || DEFAULT_ALLOWED_EMOTES;
-  state.rateLimits = state.bootstrap.rateLimits || null;
-  state.auraEnabled = state.bootstrap.auraSettings?.enabledByDefault ?? false;
+  state.auraEnabled = state.bootstrap.auraSettings?.enabledByDefault ?? true;
   state.chatPanel = new ChatPanel({
     root: document.getElementById("chatPanel"),
     list: document.getElementById("chatPanelMessages"),
@@ -76,7 +66,6 @@ async function init() {
   setupChatControls();
   setupTouchControls();
   setupHudControls();
-  setupCanvasInteractions();
 
   const onboarding = new OnboardingController({
     bootstrap: state.bootstrap,
@@ -113,7 +102,7 @@ async function enterWorld(session, localSpriteSheet, displayName) {
 
   document.getElementById("landingScreen").classList.add("hidden");
   document.getElementById("gameScreen").classList.remove("hidden");
-  document.getElementById("playerSummary").textContent = `🧭 You are ${displayName}`;
+  document.getElementById("playerSummary").textContent = `🧭 ${displayName} · click to look`;
 
   setTimeout(() => {
     fadeOverlay.classList.remove("active");
@@ -134,7 +123,7 @@ function handleNetworkJson(message) {
       upsertPlayer(message.player);
       updateOnlineCount(message.onlineCount);
       if (message.player?.id !== state.localPlayerId) {
-        announce("A new player joined the world");
+        announce("A new player joined the campus");
       }
       break;
     case "ghost_spawn":
@@ -144,7 +133,7 @@ function handleNetworkJson(message) {
       }
       if (!state.hasSeenGhostExplainer) {
         state.hasSeenGhostExplainer = true;
-        state.chatPanel.addNotice("👻 That's a ghost buddy! Players leave behind ghosts when they disconnect. They'll wake up when they return.");
+        state.chatPanel.addNotice("👻 Ghost buddies keep the world alive when players log off.");
       }
       updateOnlineCount(message.onlineCount);
       break;
@@ -213,12 +202,6 @@ function handleNetworkJson(message) {
       removeTombstone(message.id);
       break;
     case "player_chat":
-      setBubble(message.id, message.message, "chat");
-      if (message.entry) {
-        state.chatPanel.addEntry(message.entry);
-      }
-      announce(`${getSpeakerName(message.id)} says: ${message.message}`);
-      break;
     case "ghost_chat":
       setBubble(message.id, message.message, "chat");
       if (message.entry) {
@@ -227,11 +210,6 @@ function handleNetworkJson(message) {
       announce(`${getSpeakerName(message.id)} says: ${message.message}`);
       break;
     case "player_emote":
-      setBubble(message.id, message.emote, "emote");
-      if (message.entry) {
-        state.chatPanel.addEntry(message.entry);
-      }
-      break;
     case "ghost_emote":
       setBubble(message.id, message.emote, "emote");
       if (message.entry) {
@@ -267,13 +245,15 @@ function handleNetworkBatch(moves) {
     if (player.isLocal) {
       player.x = move.x;
       player.y = move.y;
+      player.angle = normalizeAngle(move.angle);
       player.renderX = move.x;
       player.renderY = move.y;
-      player.direction = move.direction;
+      player.renderAngle = player.angle;
+      player.direction = directionFromAngle(player.angle);
       continue;
     }
 
-    applyRemoteMovement(player, move.x, move.y, move.direction);
+    applyRemoteMovement(player, move.x, move.y, normalizeAngle(move.angle));
   }
 }
 
@@ -291,19 +271,19 @@ function hydrateState(message) {
   state.chatPanel.setEntries(message.chatHistory || []);
   state.tokenHud.setCount(message.selfTokenCount || 0);
   updateOnlineCount(message.onlineCount);
-  showTutorialBubble(message.map.sign.message);
+
+  if (message.map?.sign?.message) {
+    showTutorialBubble(message.map.sign.message);
+  }
 
   if (!state.hasSeenGhostExplainer && message.players.some((player) => player.isGhost)) {
     state.hasSeenGhostExplainer = true;
-    state.chatPanel.addNotice("👻 That's a ghost buddy! Players leave behind ghosts when they disconnect. They'll wake up when they return.");
-  }
-
-  if (message.players.length > 1) {
-    state.camera.brieflyPan();
+    state.chatPanel.addNotice("👻 Ghost buddies keep the campus alive between human visits.");
   }
 }
 
 function upsertPlayer(data) {
+  const angle = normalizeAngle(data.angle ?? angleFromDirection(data.direction));
   let player = state.players.get(data.id);
   if (!player) {
     player = {
@@ -318,7 +298,11 @@ function upsertPlayer(data) {
       prevRenderY: data.y,
       targetX: data.x,
       targetY: data.y,
-      direction: data.direction,
+      angle,
+      renderAngle: angle,
+      prevRenderAngle: angle,
+      targetAngle: angle,
+      direction: directionFromAngle(angle),
       spriteType: data.spriteType,
       spriteRef: data.spriteRef,
       spriteFormat: data.spriteFormat,
@@ -338,7 +322,9 @@ function upsertPlayer(data) {
     player.name = data.name;
     player.x = data.x;
     player.y = data.y;
-    player.direction = data.direction;
+    player.angle = angle;
+    player.renderAngle = angle;
+    player.direction = directionFromAngle(angle);
     player.spriteType = data.spriteType;
     player.spriteRef = data.spriteRef;
     player.spriteFormat = data.spriteFormat;
@@ -363,6 +349,7 @@ function upsertPlayer(data) {
       durationMs: 1
     };
   }
+
   state.playerIndexToId.set(data.playerIndex, data.id);
 
   if (data.chatMessage) {
@@ -400,12 +387,8 @@ function removePlayer(id) {
   if (!player) {
     return;
   }
-
   state.players.delete(id);
   state.playerIndexToId.delete(player.playerIndex);
-  if (state.hoveredPlayerId === id) {
-    state.hoveredPlayerId = null;
-  }
 }
 
 function ensureSpriteSheet(player) {
@@ -452,14 +435,7 @@ function upsertTombstone(data) {
 }
 
 function removeTombstone(id) {
-  if (!state.tombstones.has(id)) {
-    return;
-  }
-
   state.tombstones.delete(id);
-  if (state.hoveredTombstoneId === id) {
-    state.hoveredTombstoneId = null;
-  }
 }
 
 function setBubble(playerId, text, kind = "chat") {
@@ -467,7 +443,6 @@ function setBubble(playerId, text, kind = "chat") {
   if (!player) {
     return;
   }
-
   player.activeBubble = {
     text,
     kind,
@@ -483,9 +458,11 @@ function reconcileLocalMove(message) {
 
   localPlayer.x = message.x;
   localPlayer.y = message.y;
-  localPlayer.renderX = message.x;
-  localPlayer.renderY = message.y;
-  localPlayer.direction = message.direction;
+  localPlayer.angle = normalizeAngle(message.angle ?? localPlayer.angle);
+  localPlayer.renderX = localPlayer.x;
+  localPlayer.renderY = localPlayer.y;
+  localPlayer.renderAngle = localPlayer.angle;
+  localPlayer.direction = directionFromAngle(localPlayer.angle);
 }
 
 function updateOnlineCount(count) {
@@ -495,7 +472,7 @@ function updateOnlineCount(count) {
 function showTutorialBubble(message) {
   state.tutorialBubble = {
     text: message,
-    expiresAt: performance.now() + 6000,
+    expiresAt: performance.now() + 7000,
     visible: true
   };
 }
@@ -519,12 +496,6 @@ function setupChatControls() {
 
   sendButton.addEventListener("click", sendChat);
   chatInput.addEventListener("input", updateCounter);
-  chatInput.addEventListener("focus", () => {
-    setTimeout(() => {
-      chatInput.scrollIntoView({ behavior: "smooth", block: "end" });
-    }, 300);
-  });
-
   chatInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
@@ -578,11 +549,11 @@ function setupChatControls() {
 function setupTouchControls() {
   const root = document.getElementById("touchControls");
   bindTouchControls(root, {
-    onDirectionStart(direction) {
-      state.input.pushDirection(direction);
+    onMove(x, y) {
+      state.controller.setMoveVector(x, y);
     },
-    onDirectionEnd(direction) {
-      state.input.releaseDirection(direction);
+    onLook(x) {
+      state.controller.setLookVector(x);
     },
     onChat: toggleChat,
     onEmote: sendEmote
@@ -595,10 +566,6 @@ function setupHudControls() {
 
   toggleAurasButton.addEventListener("click", () => {
     state.auraEnabled = !state.auraEnabled;
-    if (state.auraEnabled && !state.hasSeenAuraWarning) {
-      state.chatPanel.addNotice("✨ Auras enabled! Disable anytime with the toggle if the pulsing is uncomfortable.");
-      state.hasSeenAuraWarning = true;
-    }
     updateAuraToggle();
   });
 
@@ -607,27 +574,34 @@ function setupHudControls() {
   });
 
   updateAuraToggle();
-}
 
-function setupCanvasInteractions() {
-  const canvas = document.getElementById("gameCanvas");
-
-  canvas.addEventListener("mousemove", (event) => {
-    if (!state.map) {
+  document.addEventListener("keydown", (event) => {
+    const target = event.target;
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
       return;
     }
 
-    const rect = canvas.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-    const hovered = getHoveredSceneTargets(x, y);
-    state.hoveredPlayerId = hovered.playerId;
-    state.hoveredTombstoneId = hovered.tombstoneId;
-  });
-
-  canvas.addEventListener("mouseleave", () => {
-    state.hoveredPlayerId = null;
-    state.hoveredTombstoneId = null;
+    if (event.key === "Enter") {
+      event.preventDefault();
+      toggleChat();
+    } else if (event.key === "Escape" && state.chatOpen) {
+      event.preventDefault();
+      closeChat();
+    } else if (event.key.toLowerCase() === "t") {
+      event.preventDefault();
+      toggleChatPanel();
+    } else if (event.key.toLowerCase() === "h") {
+      event.preventDefault();
+      showControlsHelp();
+    } else if (event.key === "1") {
+      sendEmote("👋");
+    } else if (event.key === "2") {
+      sendEmote("❤️");
+    } else if (event.key === "3") {
+      sendEmote("✨");
+    } else if (event.key === "4") {
+      sendEmote("😂");
+    }
   });
 }
 
@@ -643,7 +617,8 @@ function toggleChat() {
   if (!state.chatOpen) {
     chatBar.classList.add("open");
     state.chatOpen = true;
-    state.input.clearDirections();
+    state.controller.clearMotion();
+    state.controller.releasePointerLock();
     state.chatPanel.bump();
     chatInput.focus();
     return;
@@ -663,7 +638,7 @@ function closeChat() {
   chatBar.classList.remove("open");
   chatInput.blur();
   state.chatOpen = false;
-  state.input.clearDirections();
+  state.controller.clearMotion();
 }
 
 function toggleChatPanel() {
@@ -683,38 +658,40 @@ function updateAuraToggle() {
 
 function handleResize() {
   state.renderer.resize();
-  state.camera.resize(window.innerWidth, window.innerHeight);
 }
 
-function gameLoop() {
+function gameLoop(now) {
   const localPlayer = state.players.get(state.localPlayerId);
+  const deltaTime = Math.min((now - state.lastFrameAt) / 1000, 0.05);
+  state.lastFrameAt = now;
 
   if (state.map && localPlayer) {
-    if (!state.chatOpen) {
-      const direction = state.input.consumeMovement();
-      if (direction) {
-        tryMoveLocalPlayer(direction);
-      }
+    const movement = state.controller.update(
+      localPlayer,
+      deltaTime,
+      (x, y, margin) => isWalkableLocal(x, y, margin, localPlayer.id)
+    );
+
+    localPlayer.direction = directionFromAngle(localPlayer.angle);
+    localPlayer.renderX = localPlayer.x;
+    localPlayer.renderY = localPlayer.y;
+    localPlayer.renderAngle = localPlayer.angle;
+
+    if (movement.moved || movement.turned) {
+      hideTutorialBubble();
+      maybeSendMovement(now, localPlayer);
     }
 
     stepRemotePlayers(state.players);
-    const nearestPlayer = getNearestOtherPlayer(localPlayer);
-    state.camera.update(localPlayer, nearestPlayer);
-
-    if (state.tutorialBubble.visible && performance.now() > state.tutorialBubble.expiresAt) {
-      state.tutorialBubble.visible = false;
-    }
+    cullExpiredBubbles(now);
 
     state.renderer.render({
       map: state.map,
-      camera: state.camera,
+      localPlayer,
       players: state.players,
       tokens: state.tokens,
       tombstones: state.tombstones,
-      localPlayerId: state.localPlayerId,
       tutorialBubble: state.tutorialBubble,
-      hoveredPlayerId: state.hoveredPlayerId,
-      hoveredTombstoneId: state.hoveredTombstoneId,
       auraEnabled: state.auraEnabled
     });
   }
@@ -722,52 +699,55 @@ function gameLoop() {
   requestAnimationFrame(gameLoop);
 }
 
-function tryMoveLocalPlayer(direction) {
-  const localPlayer = state.players.get(state.localPlayerId);
-  if (!localPlayer || !state.map) {
+function maybeSendMovement(now, player) {
+  if (!state.network?.isOpen()) {
     return;
   }
 
-  const deltas = {
-    up: [0, -1],
-    down: [0, 1],
-    left: [-1, 0],
-    right: [1, 0]
-  };
-
-  const [dx, dy] = deltas[direction];
-  const nextX = localPlayer.x + dx;
-  const nextY = localPlayer.y + dy;
-
-  localPlayer.direction = direction;
-
-  if (!isWalkableLocal(nextX, nextY, localPlayer.id)) {
+  const snapshot = `${player.x.toFixed(2)}:${player.y.toFixed(2)}:${player.angle.toFixed(3)}`;
+  if (snapshot === state.lastSentState) {
     return;
   }
 
-  localPlayer.x = nextX;
-  localPlayer.y = nextY;
-  localPlayer.renderX = nextX;
-  localPlayer.renderY = nextY;
-  state.network?.sendMove(nextX, nextY, direction);
-  hideTutorialBubble();
+  if (now - state.lastMovementSentAt < 45) {
+    return;
+  }
+
+  const sent = state.network.sendMove(player.x, player.y, player.angle);
+  if (sent) {
+    state.lastMovementSentAt = now;
+    state.lastSentState = snapshot;
+  }
 }
 
-function isWalkableLocal(x, y, selfId) {
+function isWalkableLocal(x, y, margin, selfId) {
   if (!state.map) {
     return false;
   }
 
-  if (x < 0 || y < 0 || x >= state.map.width || y >= state.map.height) {
-    return false;
-  }
+  const corners = [
+    [x - margin, y - margin],
+    [x + margin, y - margin],
+    [x - margin, y + margin],
+    [x + margin, y + margin]
+  ];
 
-  if (state.blockedTiles.has(state.map.tiles[y][x])) {
-    return false;
+  for (const [cornerX, cornerY] of corners) {
+    const tileX = Math.floor(cornerX);
+    const tileY = Math.floor(cornerY);
+    if (tileX < 0 || tileY < 0 || tileX >= state.map.width || tileY >= state.map.height) {
+      return false;
+    }
+    if (state.blockedTiles.has(state.map.tiles[tileY][tileX])) {
+      return false;
+    }
   }
 
   for (const player of state.players.values()) {
-    if (!player.isSleeping && player.id !== selfId && player.x === x && player.y === y) {
+    if (player.id === selfId || player.isSleeping) {
+      continue;
+    }
+    if (Math.hypot(player.x - x, player.y - y) < 0.45) {
       return false;
     }
   }
@@ -775,66 +755,16 @@ function isWalkableLocal(x, y, selfId) {
   return true;
 }
 
-function getNearestOtherPlayer(localPlayer) {
-  let best = null;
-  let bestDistance = Number.POSITIVE_INFINITY;
-
+function cullExpiredBubbles(now) {
   for (const player of state.players.values()) {
-    if (player.id === localPlayer.id || player.isSleeping) {
-      continue;
-    }
-
-    const distance = Math.abs(player.x - localPlayer.x) + Math.abs(player.y - localPlayer.y);
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      best = player;
+    if (player.activeBubble?.expiresAt <= now) {
+      player.activeBubble = null;
     }
   }
 
-  return best;
-}
-
-function getHoveredSceneTargets(mouseX, mouseY) {
-  const hovered = {
-    playerId: null,
-    tombstoneId: null
-  };
-  const tileSize = state.renderer.tilePixels;
-
-  for (const player of state.players.values()) {
-    if (player.id === state.localPlayerId || player.isSleeping) {
-      continue;
-    }
-
-    const spriteX = player.renderX * tileSize - state.camera.x - tileSize / 2;
-    const spriteY = player.renderY * tileSize - state.camera.y - tileSize * 1.5;
-    const width = tileSize * 1.5;
-    const height = tileSize * 1.5;
-
-    if (mouseX >= spriteX && mouseX <= spriteX + width && mouseY >= spriteY && mouseY <= spriteY + height) {
-      hovered.playerId = player.id;
-      break;
-    }
+  if (state.tutorialBubble.visible && now > state.tutorialBubble.expiresAt) {
+    state.tutorialBubble.visible = false;
   }
-
-  for (const tombstone of state.tombstones.values()) {
-    const tombstoneX = tombstone.x * tileSize - state.camera.x + tileSize * 0.18;
-    const tombstoneY = tombstone.y * tileSize - state.camera.y + tileSize * 0.12;
-    const width = tileSize * 0.64;
-    const height = tileSize * 0.76;
-
-    if (
-      mouseX >= tombstoneX &&
-      mouseX <= tombstoneX + width &&
-      mouseY >= tombstoneY &&
-      mouseY <= tombstoneY + height
-    ) {
-      hovered.tombstoneId = tombstone.id;
-      break;
-    }
-  }
-
-  return hovered;
 }
 
 async function fetchJson(url) {
@@ -847,7 +777,7 @@ async function fetchJson(url) {
 }
 
 function showControlsHelp() {
-  state.chatPanel?.addNotice("🎮 Controls: Arrow keys or WASD = move, Enter = chat, T = chat log, 1-4 = emotes, H = this help");
+  state.chatPanel?.addNotice("🎮 Controls: click to lock camera, WASD move, mouse or right stick look, Enter chat, T chat log, 1-4 emotes.");
 }
 
 function getSpeakerName(playerId) {
@@ -878,7 +808,7 @@ function setGhostSleepState(player, isSleeping, fadeDuration = 0) {
     return;
   }
 
-  const visibility = state.renderer?.ghostRenderer.getVisibility(player) ?? (player.isSleeping ? 0 : 1);
+  const visibility = getGhostVisibility(player);
   player.isSleeping = isSleeping;
   player.ghostTransition = {
     from: visibility,
@@ -886,4 +816,50 @@ function setGhostSleepState(player, isSleeping, fadeDuration = 0) {
     startedAt: performance.now(),
     durationMs: Math.max(1, fadeDuration)
   };
+}
+
+function getGhostVisibility(player) {
+  if (!player.isGhost) {
+    return 1;
+  }
+
+  if (!player.ghostTransition) {
+    return player.isSleeping ? 0 : 1;
+  }
+
+  const progress = Math.min((performance.now() - player.ghostTransition.startedAt) / player.ghostTransition.durationMs, 1);
+  return player.ghostTransition.from + ((player.ghostTransition.to - player.ghostTransition.from) * progress);
+}
+
+function directionFromAngle(angle) {
+  const normalized = normalizeAngle(angle);
+  if (normalized >= Math.PI * 0.25 && normalized < Math.PI * 0.75) {
+    return "down";
+  }
+  if (normalized >= Math.PI * 0.75 && normalized < Math.PI * 1.25) {
+    return "left";
+  }
+  if (normalized >= Math.PI * 1.25 && normalized < Math.PI * 1.75) {
+    return "up";
+  }
+  return "right";
+}
+
+function angleFromDirection(direction) {
+  switch (direction) {
+    case "up":
+      return Math.PI * 1.5;
+    case "left":
+      return Math.PI;
+    case "right":
+      return 0;
+    case "down":
+    default:
+      return Math.PI * 0.5;
+  }
+}
+
+function normalizeAngle(angle) {
+  const fullTurn = Math.PI * 2;
+  return ((angle % fullTurn) + fullTurn) % fullTurn;
 }

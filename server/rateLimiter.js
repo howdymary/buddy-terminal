@@ -39,7 +39,7 @@ export class SlidingWindowRateLimiter {
 
 export function createPlayerRateLimits() {
   return {
-    moves: new SlidingWindowRateLimiter(20, 1000),
+    moves: new SlidingWindowRateLimiter(60, 1000),
     chat: new SlidingWindowRateLimiter(5, 10_000, 30_000),
     emote: new SlidingWindowRateLimiter(3, 5000, 10_000)
   };

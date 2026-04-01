@@ -1,11 +1,5 @@
-const DIRECTION_CODES = {
-  down: 0,
-  up: 1,
-  left: 2,
-  right: 3
-};
-
-const CODE_TO_DIRECTION = ["down", "up", "left", "right"];
+const POSITION_SCALE = 100;
+const ANGLE_SCALE = 1000;
 
 export class BuddyNetwork {
   constructor({ token, handlers }) {
@@ -37,17 +31,19 @@ export class BuddyNetwork {
     });
   }
 
-  sendMove(x, y, direction) {
+  sendMove(x, y, angle) {
     if (!this.isOpen()) {
-      return;
+      return false;
     }
 
-    const payload = new Uint8Array(4);
-    payload[0] = 0x01;
-    payload[1] = x;
-    payload[2] = y;
-    payload[3] = DIRECTION_CODES[direction] ?? 0;
+    const payload = new ArrayBuffer(7);
+    const view = new DataView(payload);
+    view.setUint8(0, 0x01);
+    view.setUint16(1, encodePosition(x));
+    view.setUint16(3, encodePosition(y));
+    view.setUint16(5, encodeAngle(angle));
     this.ws.send(payload);
+    return true;
   }
 
   sendChat(message) {
@@ -87,14 +83,31 @@ function decodeBatch(buffer) {
   const moves = [];
 
   for (let index = 0; index < count; index += 1) {
-    const offset = 3 + index * 5;
+    const offset = 3 + index * 8;
     moves.push({
       playerIndex: view.getUint16(offset),
-      x: view.getUint8(offset + 2),
-      y: view.getUint8(offset + 3),
-      direction: CODE_TO_DIRECTION[view.getUint8(offset + 4)] ?? "down"
+      x: view.getUint16(offset + 2) / POSITION_SCALE,
+      y: view.getUint16(offset + 4) / POSITION_SCALE,
+      angle: decodeAngle(view.getUint16(offset + 6))
     });
   }
 
   return moves;
+}
+
+function encodePosition(value) {
+  return Math.max(0, Math.min(65535, Math.round(value * POSITION_SCALE)));
+}
+
+function encodeAngle(value) {
+  return Math.max(0, Math.min(65535, Math.round(normalizeAngle(value) * ANGLE_SCALE)));
+}
+
+function decodeAngle(value) {
+  return normalizeAngle(value / ANGLE_SCALE);
+}
+
+function normalizeAngle(angle) {
+  const fullTurn = Math.PI * 2;
+  return ((angle % fullTurn) + fullTurn) % fullTurn;
 }
