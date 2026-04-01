@@ -246,7 +246,7 @@ export class OnboardingController {
       this.state.isProcessingUpload = false;
       console.error("[UPLOAD] Selection failed", error);
       this.setUploadStatus(
-        error.message || "❌ Upload failed. Try a cleaner screenshot, or pick a default buddy below.",
+        error.message || "Upload failed. Try a cleaner screenshot, or pick a default buddy below.",
         true
       );
       this.updateEnterState();
@@ -267,7 +267,7 @@ export class OnboardingController {
     this.state.processedUpload = null;
     this.state.processedUploadPromise = null;
     this.state.isProcessingUpload = true;
-    this.setUploadStatus(`⏳ Processing ${file.name}... (this may take a few seconds)`);
+    this.setUploadStatus("Generating your buddy sprite...");
     this.renderBuddyMeta(null);
     this.updateEnterState();
 
@@ -275,45 +275,79 @@ export class OnboardingController {
       button.classList.remove("selected");
     }
 
+    // Step 1: Build local preview immediately from the raw file
     this.state.localSpriteSheet = await buildSpriteSheetFromFile(file);
     this.state.localWorldSpriteSheet = this.state.localSpriteSheet;
     console.info("[UPLOAD] Local preview sprite generated");
     this.drawPreviewSprite();
 
+    // Step 2: Upload to server for processing (with retry for cold-start)
     const currentFile = file;
-    this.state.processedUploadPromise = this.processUpload()
-      .then(async (processed) => {
-        if (this.state.uploadedFile !== currentFile) {
-          return processed;
-        }
+    let processed;
+    try {
+      processed = await this.uploadToServer(file);
+    } catch (error) {
+      console.error("[UPLOAD] Server processing failed", error);
+      this.state.isProcessingUpload = false;
+      this.setUploadStatus(
+        error.message || "Server processing failed. Try again or pick a default buddy.",
+        true
+      );
+      this.updateEnterState();
+      return;
+    }
 
-        this.state.processedUpload = processed;
-        this.state.localWorldSpriteSheet = await loadSpriteSheetAsset(processed.spriteUrl);
-        this.state.isProcessingUpload = false;
-        this.renderBuddyMeta(processed.buddyMeta, processed.hasRealBuddy);
-        this.setUploadStatus(
-          processed.hasRealBuddy
-            ? `Parsed ${processed.buddyMeta?.rarityLabel || "rare"} ${processed.buddyMeta?.species || "buddy"} aura.`
-            : "Custom upload ready. No rarity aura detected, but your sprite is good to go."
-        );
+    // Abort if user selected a different file while we were uploading
+    if (this.state.uploadedFile !== currentFile) {
+      return;
+    }
+
+    // Step 3: Mark as processed — this unlocks the Enter World button
+    this.state.processedUpload = processed;
+    this.state.isProcessingUpload = false;
+
+    // Step 4: Show buddy meta (name, rarity, traits) immediately
+    this.renderBuddyMeta(processed.buddyMeta, processed.hasRealBuddy);
+    this.setUploadStatus(
+      processed.hasRealBuddy
+        ? `${processed.buddyMeta?.rarityLabel || "Rare"} ${processed.buddyMeta?.species || "buddy"} detected — aura unlocked!`
+        : "Custom buddy ready! No rarity aura detected, but your sprite looks great."
+    );
+    this.updateEnterState();
+
+    // Step 5: Try to load the server-generated sprite for higher quality preview
+    // This is optional — if it fails, we still have the local sprite
+    try {
+      const serverSprite = await loadSpriteSheetAsset(processed.spriteUrl);
+      if (this.state.uploadedFile === currentFile) {
+        this.state.localWorldSpriteSheet = serverSprite;
         this.drawPreviewSprite();
-        this.updateEnterState();
-        return processed;
-      })
-      .catch((error) => {
-        this.state.processedUploadPromise = null;
-        this.state.isProcessingUpload = false;
-        if (this.state.uploadedFile === currentFile) {
-          this.setUploadStatus(
-            error.message || "❌ Couldn't read that image. Try a cleaner screenshot, or pick a default buddy below.",
-            true
-          );
-          this.updateEnterState();
-        }
-        throw error;
-      });
+      }
+    } catch (error) {
+      console.warn("[UPLOAD] Server sprite load failed, using local preview", error.message);
+      // Not a problem — local sprite is fine
+    }
+  }
 
-    return this.state.processedUploadPromise;
+  async uploadToServer(file) {
+    const formData = new FormData();
+    formData.append("buddy", file);
+
+    console.info("[UPLOAD] Sending buddy card to server...");
+    const response = await fetchWithRetry("/api/process-sprite", {
+      method: "POST",
+      body: formData
+    });
+
+    console.info("[UPLOAD] Server response status", response.status);
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: "Sprite upload failed." }));
+      throw new Error(error.error || "Sprite upload failed.");
+    }
+
+    const processed = await response.json();
+    console.info("[UPLOAD] Server processed sprite", processed.spriteUrl, processed.buddyMeta?.buddyName);
+    return processed;
   }
 
   getResolvedName() {
@@ -336,7 +370,7 @@ export class OnboardingController {
     const canEnter = this.canEnter();
     this.elements.enterWorldButton.disabled = !canEnter;
     if (this.state.isProcessingUpload) {
-      this.elements.enterStatus.textContent = "Analyzing your buddy card...";
+      this.elements.enterStatus.textContent = "Generating your buddy...";
       return;
     }
 
@@ -351,15 +385,20 @@ export class OnboardingController {
     }
 
     this.state.isEntering = true;
+    this.elements.enterStatus.textContent = "Entering the world...";
     this.updateEnterState();
 
     try {
       let sessionPayload;
 
-      if (this.state.uploadedFile) {
-        const processed = await this.processUpload();
+      if (this.state.uploadedFile && this.state.processedUpload) {
+        const processed = this.state.processedUpload;
         if (!this.state.localWorldSpriteSheet && processed.spriteUrl) {
-          this.state.localWorldSpriteSheet = await loadSpriteSheetAsset(processed.spriteUrl);
+          try {
+            this.state.localWorldSpriteSheet = await loadSpriteSheetAsset(processed.spriteUrl);
+          } catch {
+            // Use local sprite fallback
+          }
         }
 
         sessionPayload = {
@@ -373,7 +412,7 @@ export class OnboardingController {
         };
       }
 
-      const response = await fetch("/api/session", {
+      const response = await fetchWithRetry("/api/session", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -399,44 +438,6 @@ export class OnboardingController {
     }
   }
 
-  async processUpload() {
-    if (this.state.processedUpload) {
-      return this.state.processedUpload;
-    }
-
-    if (this.state.processedUploadPromise) {
-      return this.state.processedUploadPromise;
-    }
-
-    const formData = new FormData();
-    formData.append("buddy", this.state.uploadedFile);
-
-    console.info("[UPLOAD] Sending buddy card to server...");
-    this.state.processedUploadPromise = fetchWithRetry("/api/process-sprite", {
-      method: "POST",
-      body: formData
-    })
-      .then(async (response) => {
-        console.info("[UPLOAD] Server response status", response.status);
-        if (!response.ok) {
-          const error = await response.json().catch(() => ({ error: "Sprite upload failed." }));
-          throw new Error(error.error || "Sprite upload failed.");
-        }
-
-        const processed = await response.json();
-        console.info("[UPLOAD] Server processed sprite", processed.spriteUrl, processed.buddyMeta?.buddyName);
-        this.state.processedUpload = processed;
-        return processed;
-      })
-      .catch((error) => {
-        this.state.processedUploadPromise = null;
-        console.error("[UPLOAD] Server processing failed", error);
-        throw error;
-      });
-
-    return this.state.processedUploadPromise;
-  }
-
   setUploadStatus(message, isError = false) {
     this.elements.uploadStatus.textContent = message || "";
     this.elements.uploadStatus.className = isError
@@ -453,13 +454,29 @@ export class OnboardingController {
     }
 
     root.classList.remove("hidden");
+    const name = meta.buddyName || "Buddy";
     const rarity = meta.rarityLabel || "Common";
     const species = meta.species || "buddy";
-    const aura = hasRealBuddy ? `${"★".repeat(meta.rarityStars || 1)} aura unlocked` : "No aura";
+    const stars = meta.rarityStars || 1;
+    const starDisplay = "★".repeat(stars) + "☆".repeat(Math.max(0, 5 - stars));
+    const aura = hasRealBuddy ? "Aura unlocked" : "No aura";
+    const debugging = meta.stats?.debugging ?? "--";
+    const patience = meta.stats?.patience ?? "--";
+    const chaos = meta.stats?.chaos ?? "--";
+    const wisdom = meta.stats?.wisdom ?? "--";
+    const snark = meta.stats?.snark ?? "--";
+
     root.innerHTML = `
-      <div class="parsed-buddy-meta__title">${meta.buddyName || "Buddy"} • ${rarity} ${species}</div>
-      <div class="parsed-buddy-meta__row">${aura}</div>
-      <div class="parsed-buddy-meta__row">Debug ${meta.stats?.debugging ?? "--"} • Patience ${meta.stats?.patience ?? "--"} • Wisdom ${meta.stats?.wisdom ?? "--"}</div>
+      <div class="parsed-buddy-meta__name">${name}</div>
+      <div class="parsed-buddy-meta__rarity">${starDisplay} ${rarity} ${species}</div>
+      <div class="parsed-buddy-meta__aura">${hasRealBuddy ? "✨ " : ""}${aura}</div>
+      <div class="parsed-buddy-meta__stats">
+        <span title="Debugging">🐛 ${debugging}</span>
+        <span title="Patience">🧘 ${patience}</span>
+        <span title="Chaos">🌀 ${chaos}</span>
+        <span title="Wisdom">🦉 ${wisdom}</span>
+        <span title="Snark">😏 ${snark}</span>
+      </div>
     `;
   }
 
@@ -526,7 +543,7 @@ async function fetchWithRetry(url, options, retries = 2) {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15_000);
+      const timeout = setTimeout(() => controller.abort(), 20_000);
       const response = await fetch(url, { ...options, signal: controller.signal });
       clearTimeout(timeout);
       return response;
