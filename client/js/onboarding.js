@@ -104,7 +104,8 @@ export class OnboardingController {
       }
     });
 
-    this.elements.browseButton.addEventListener("click", () => {
+    this.elements.browseButton.addEventListener("click", (event) => {
+      event.stopPropagation();
       this.elements.fileInput.click();
     });
 
@@ -142,7 +143,10 @@ export class OnboardingController {
       await this.handleUploadSelection(file, "drag and drop");
     });
 
-    this.elements.uploadDropzone.addEventListener("click", () => {
+    this.elements.uploadDropzone.addEventListener("click", (event) => {
+      if (event.target.closest("button")) {
+        return;
+      }
       this.elements.fileInput.click();
     });
 
