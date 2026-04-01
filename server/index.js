@@ -72,7 +72,16 @@ app.use((req, res, next) => {
   }
   next();
 });
-app.use(express.static(clientRoot));
+app.use(express.static(clientRoot, {
+  maxAge: 0,
+  etag: true,
+  lastModified: true,
+  setHeaders(res, filePath) {
+    if (/\.(js|css|html)$/i.test(filePath)) {
+      res.setHeader("Cache-Control", "no-cache, must-revalidate");
+    }
+  }
+}));
 
 app.get("/api/bootstrap", (_req, res) => {
   res.json({
