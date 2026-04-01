@@ -123,6 +123,10 @@ async function enterWorld(session, localSpriteSheet, displayName) {
   state.heartbeatTimer = setInterval(() => {
     state.network?.sendHeartbeat();
   }, 10_000);
+
+  setTimeout(() => {
+    state.chatPanel.addNotice("Press Enter to chat, T for the chat log, and 1-4 for quick emotes. On mobile, tap 💬.");
+  }, 2500);
 }
 
 function handleNetworkJson(message) {

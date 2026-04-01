@@ -246,7 +246,7 @@ export class OnboardingController {
       this.state.isProcessingUpload = false;
       console.error("[UPLOAD] Selection failed", error);
       this.setUploadStatus(
-        error.message || "❌ Couldn't read that image. Try a PNG, JPG, or GIF under 2MB.",
+        error.message || "❌ Upload failed. Try a cleaner screenshot, or pick a default buddy below.",
         true
       );
       this.updateEnterState();
@@ -267,7 +267,7 @@ export class OnboardingController {
     this.state.processedUpload = null;
     this.state.processedUploadPromise = null;
     this.state.isProcessingUpload = true;
-    this.setUploadStatus(`⏳ Processing ${file.name}...`);
+    this.setUploadStatus(`⏳ Processing ${file.name}... (this may take a few seconds)`);
     this.renderBuddyMeta(null);
     this.updateEnterState();
 
@@ -412,7 +412,7 @@ export class OnboardingController {
     formData.append("buddy", this.state.uploadedFile);
 
     console.info("[UPLOAD] Sending buddy card to server...");
-    this.state.processedUploadPromise = fetch("/api/process-sprite", {
+    this.state.processedUploadPromise = fetchWithRetry("/api/process-sprite", {
       method: "POST",
       body: formData
     })
@@ -520,6 +520,28 @@ function generateFunName() {
   const animal = NAME_ANIMALS[Math.floor(Math.random() * NAME_ANIMALS.length)];
   const suffix = Math.floor(Math.random() * 90) + 10;
   return `${adjective}${animal}_${suffix}`;
+}
+
+async function fetchWithRetry(url, options, retries = 2) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      const response = await fetch(url, { ...options, signal: controller.signal });
+      clearTimeout(timeout);
+      return response;
+    } catch (error) {
+      if (attempt === retries) {
+        if (error.name === "AbortError") {
+          throw new Error("Server took too long. It may be waking up — try again in a few seconds.");
+        }
+        throw error;
+      }
+      console.warn(`[UPLOAD] Attempt ${attempt + 1} failed, retrying...`, error.message);
+      await new Promise((resolve) => setTimeout(resolve, 2000 * (attempt + 1)));
+    }
+  }
+  throw new Error("Upload failed after retries.");
 }
 
 function validateUploadFile(file) {
