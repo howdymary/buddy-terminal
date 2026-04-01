@@ -5,19 +5,7 @@ export async function generateBuddySpriteSheet({ sourceBuffer, cropRegion, domin
   const metadata = await source.metadata();
   const safeCrop = clampCropRegion(cropRegion, metadata.width ?? 32, metadata.height ?? 32);
 
-  const baseSprite = await source
-    .extract(safeCrop)
-    .resize(32, 32, {
-      fit: "contain",
-      background: { r: 0, g: 0, b: 0, alpha: 0 },
-      kernel: sharp.kernel.nearest
-    })
-    .png({
-      palette: true,
-      colors: 16,
-      compressionLevel: 9
-    })
-    .toBuffer();
+  const baseSprite = await buildTransparentSpriteBase(source, safeCrop);
 
   const glow = hexToRgb(dominantColor ?? "#79c4a0");
   const frames = await Promise.all([
@@ -59,6 +47,47 @@ export async function generateBuddySpriteSheet({ sourceBuffer, cropRegion, domin
     spriteSheet,
     preview: baseSprite
   };
+}
+
+async function buildTransparentSpriteBase(source, cropRegion) {
+  const resized = await source
+    .extract(cropRegion)
+    .resize(32, 32, {
+      fit: "contain",
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+      kernel: sharp.kernel.nearest
+    })
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  const pixels = Buffer.from(resized.data);
+  for (let index = 0; index < pixels.length; index += 4) {
+    const r = pixels[index];
+    const g = pixels[index + 1];
+    const b = pixels[index + 2];
+    const alpha = pixels[index + 3];
+    const brightness = r + g + b;
+    const saturation = Math.max(r, g, b) - Math.min(r, g, b);
+
+    if (alpha < 12 || (brightness < 120 && saturation < 32)) {
+      pixels[index + 3] = 0;
+    }
+  }
+
+  return sharp(pixels, {
+    raw: {
+      width: resized.info.width,
+      height: resized.info.height,
+      channels: 4
+    }
+  })
+    .png({
+      palette: true,
+      colors: 16,
+      compressionLevel: 9
+    })
+    .toBuffer();
 }
 
 async function createFrame(baseSprite, direction, frame, glow) {

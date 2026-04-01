@@ -156,19 +156,26 @@ export const BLOCKED_TILES = new Set([
 ]);
 
 export function isInBounds(x, y) {
-  return x >= 0 && x < MAP_WIDTH && y >= 0 && y < MAP_HEIGHT;
+  const tileX = Math.floor(x);
+  const tileY = Math.floor(y);
+  return tileX >= 0 && tileX < MAP_WIDTH && tileY >= 0 && tileY < MAP_HEIGHT;
 }
 
 export function isWalkable(x, y) {
-  if (!isInBounds(x, y)) {
+  const tileX = Math.floor(x);
+  const tileY = Math.floor(y);
+
+  if (!isInBounds(tileX, tileY)) {
     return false;
   }
 
-  return !BLOCKED_TILES.has(mapTiles[y][x]);
+  return !BLOCKED_TILES.has(mapTiles[tileY][tileX]);
 }
 
 export function isPathTile(x, y) {
-  return isInBounds(x, y) && mapTiles[y][x] === TILE_IDS.PATH;
+  const tileX = Math.floor(x);
+  const tileY = Math.floor(y);
+  return isInBounds(tileX, tileY) && mapTiles[tileY][tileX] === TILE_IDS.PATH;
 }
 
 export function getMapPayload() {

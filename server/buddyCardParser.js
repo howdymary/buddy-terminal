@@ -31,6 +31,7 @@ const RARITIES = [
 
 const STAT_KEYS = ["debugging", "patience", "chaos", "wisdom", "snark"];
 const MAX_CONCURRENT_OCR = 2;
+const DEFAULT_BUDDY_COLOR = "#79c4a0";
 
 let activeOcrCount = 0;
 
@@ -55,8 +56,28 @@ export async function parseBuddyCard(buffer) {
   const stats = await image.stats();
   const isDarkCard = stats.channels.slice(0, 3).every((channel) => channel.mean < 120);
   const looksCardLike = isDarkCard && height >= width * 0.9;
-  const cropRegion = await detectAsciiRegion(image, { width, height, looksCardLike });
-  const dominantColor = await extractDominantColor(image, cropRegion);
+  const fallbackCrop = fallbackCropRegion({ width, height, looksCardLike });
+
+  let cropRegion = fallbackCrop;
+  try {
+    cropRegion = await detectAsciiRegion(image.clone(), { width, height, looksCardLike });
+  } catch (error) {
+    console.warn("ASCII region detection failed, using fallback crop:", error.message);
+  }
+
+  let dominantColor = DEFAULT_BUDDY_COLOR;
+  try {
+    dominantColor = await extractDominantColor(image.clone(), cropRegion, { width, height });
+  } catch (error) {
+    console.warn("Dominant color extraction failed, retrying with fallback crop:", error.message);
+    try {
+      dominantColor = await extractDominantColor(image.clone(), fallbackCrop, { width, height });
+      cropRegion = fallbackCrop;
+    } catch {
+      dominantColor = DEFAULT_BUDDY_COLOR;
+    }
+  }
+
   const ocrText = looksCardLike ? await extractText(buffer) : "";
   const buddyMeta = inferBuddyMeta(ocrText, dominantColor, looksCardLike);
 
@@ -72,65 +93,61 @@ async function detectAsciiRegion(image, { width, height, looksCardLike }) {
     return { left: 0, top: 0, width, height };
   }
 
-  const scanWidth = Math.max(48, Math.floor(width * 0.82));
-  const left = Math.floor((width - scanWidth) / 2);
-  const top = Math.floor(height * 0.12);
-  const scanHeight = Math.floor(height * 0.36);
+  const focus = {
+    left: Math.max(0, Math.floor(width * 0.05)),
+    top: Math.max(0, Math.floor(height * 0.10)),
+    width: Math.max(72, Math.floor(width * 0.41)),
+    height: Math.max(72, Math.floor(height * 0.31))
+  };
+  focus.width = Math.min(focus.width, width - focus.left);
+  focus.height = Math.min(focus.height, height - focus.top);
 
-  const grayscale = await image
-    .extract({ left, top, width: scanWidth, height: scanHeight })
-    .grayscale()
+  const scan = await image
+    .extract(focus)
+    .removeAlpha()
     .raw()
     .toBuffer({ resolveWithObject: true });
 
-  let bestStart = 0;
-  let bestEnd = scanHeight - 1;
-  let currentStart = 0;
-  let inDenseRun = false;
-  let bestScore = -1;
+  let minX = focus.width;
+  let maxX = 0;
+  let minY = focus.height;
+  let maxY = 0;
+  let accentCount = 0;
 
-  for (let row = 0; row < scanHeight; row += 1) {
-    let brightPixels = 0;
-    for (let col = 0; col < scanWidth; col += 1) {
-      const value = grayscale.data[row * scanWidth + col];
-      if (value > 72) {
-        brightPixels += 1;
+  for (let y = 0; y < focus.height; y += 1) {
+    for (let x = 0; x < focus.width; x += 1) {
+      const index = (y * focus.width + x) * 3;
+      const r = scan.data[index];
+      const g = scan.data[index + 1];
+      const b = scan.data[index + 2];
+      if (!isAsciiForegroundPixel(r, g, b)) {
+        continue;
       }
-    }
 
-    const density = brightPixels / scanWidth;
-    const isDense = density > 0.1;
-
-    if (isDense && !inDenseRun) {
-      currentStart = row;
-      inDenseRun = true;
-    }
-
-    if ((!isDense || row === scanHeight - 1) && inDenseRun) {
-      const end = isDense && row === scanHeight - 1 ? row : row - 1;
-      const score = end - currentStart;
-      if (score > bestScore) {
-        bestScore = score;
-        bestStart = currentStart;
-        bestEnd = end;
-      }
-      inDenseRun = false;
+      accentCount += 1;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
     }
   }
 
-  const paddedTop = Math.max(top + bestStart - 8, 0);
-  const paddedHeight = Math.min(bestEnd - bestStart + 24, height - paddedTop);
-  return {
-    left: Math.max(left - 6, 0),
-    top: paddedTop,
-    width: Math.min(scanWidth + 12, width - Math.max(left - 6, 0)),
-    height: Math.max(32, paddedHeight)
-  };
+  if (accentCount < 60 || maxX <= minX || maxY <= minY) {
+    return fallbackCropRegion({ width, height, looksCardLike });
+  }
+
+  return clampCropRegion({
+    left: focus.left + minX - 12,
+    top: focus.top + minY - 12,
+    width: (maxX - minX) + 25,
+    height: (maxY - minY) + 25
+  }, width, height);
 }
 
-async function extractDominantColor(image, cropRegion) {
+async function extractDominantColor(image, cropRegion, { width, height }) {
+  const safeCrop = clampCropRegion(cropRegion, width, height);
   const { data } = await image
-    .extract(cropRegion)
+    .extract(safeCrop)
     .removeAlpha()
     .resize(24, 24, { fit: "cover", kernel: sharp.kernel.nearest })
     .raw()
@@ -242,26 +259,42 @@ function inferName(original, normalized) {
     .map((line) => line.trim())
     .filter(Boolean);
 
-  const candidate = lines.find((line) => {
-    const lower = line.toLowerCase();
-    return (
-      lower.length >= 3 &&
-      lower.length <= 18 &&
-      !lower.includes("debugging") &&
-      !lower.includes("patience") &&
-      !lower.includes("chaos") &&
-      !lower.includes("wisdom") &&
-      !lower.includes("snark") &&
-      !lower.includes("legendary") &&
-      !lower.includes("epic") &&
-      !lower.includes("rare") &&
-      !lower.includes("common") &&
-      !SPECIES.some((species) => lower.includes(species))
-    );
-  });
+  const candidates = lines
+    .map((line) => {
+      const lower = line.toLowerCase();
+      const cleaned = line.replace(/[^a-zA-Z0-9 _-]/g, "").replace(/\s+/g, " ").trim();
+      const alphaCount = (cleaned.match(/[a-z]/gi) || []).length;
+      if (
+        cleaned.length < 3 ||
+        cleaned.length > 18 ||
+        alphaCount < 3 ||
+        lower.includes("debugging") ||
+        lower.includes("patience") ||
+        lower.includes("chaos") ||
+        lower.includes("wisdom") ||
+        lower.includes("snark") ||
+        lower.includes("legendary") ||
+        lower.includes("epic") ||
+        lower.includes("rare") ||
+        lower.includes("common") ||
+        SPECIES.some((species) => lower.includes(species))
+      ) {
+        return null;
+      }
 
-  if (candidate) {
-    return candidate.replace(/[^a-zA-Z0-9 _-]/g, "").trim().slice(0, 18);
+      const punctuationPenalty = /[^a-zA-Z0-9 _-]/.test(line) ? 6 : 0;
+      const titleBonus = /^[A-Z][a-z]+(?: [A-Z][a-z]+)?$/.test(cleaned) ? 6 : 0;
+      const compactBonus = cleaned.includes(" ") ? 0 : 2;
+      return {
+        cleaned,
+        score: alphaCount + titleBonus + compactBonus - punctuationPenalty
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => right.score - left.score);
+
+  if (candidates[0]) {
+    return candidates[0].cleaned.slice(0, 18);
   }
 
   if (normalized.includes("buddy")) {
@@ -275,9 +308,44 @@ function inferStats(text) {
   const stats = {};
   for (const key of STAT_KEYS) {
     const match = text.match(new RegExp(`${key}\\D{0,12}(\\d{1,3})`, "i"));
-    stats[key] = match ? clamp(Number.parseInt(match[1], 10), 0, 99) : fallbackStat(key);
+    const parsedValue = match ? clamp(Number.parseInt(match[1], 10), 0, 99) : null;
+    stats[key] = parsedValue != null && parsedValue >= 10 ? parsedValue : fallbackStat(key);
   }
   return stats;
+}
+
+function fallbackCropRegion({ width, height, looksCardLike }) {
+  if (!looksCardLike) {
+    return { left: 0, top: 0, width, height };
+  }
+
+  return clampCropRegion({
+    left: Math.floor(width * 0.10),
+    top: Math.floor(height * 0.12),
+    width: Math.floor(width * 0.28),
+    height: Math.floor(height * 0.22)
+  }, width, height);
+}
+
+function clampCropRegion(cropRegion, width, height) {
+  const left = Math.max(0, Math.min(Math.floor(cropRegion?.left ?? 0), Math.max(0, width - 1)));
+  const top = Math.max(0, Math.min(Math.floor(cropRegion?.top ?? 0), Math.max(0, height - 1)));
+  const clampedWidth = Math.max(1, Math.min(Math.floor(cropRegion?.width ?? width), width - left));
+  const clampedHeight = Math.max(1, Math.min(Math.floor(cropRegion?.height ?? height), height - top));
+
+  return {
+    left,
+    top,
+    width: clampedWidth,
+    height: clampedHeight
+  };
+}
+
+function isAsciiForegroundPixel(r, g, b) {
+  const brightness = r + g + b;
+  const saturation = Math.max(r, g, b) - Math.min(r, g, b);
+  const greenDominance = g - Math.max(r, b);
+  return brightness > 150 && (greenDominance > 8 || saturation > 28);
 }
 
 function validateMagicBytes(buffer) {
