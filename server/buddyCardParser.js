@@ -7,17 +7,30 @@ const MAGIC_BYTES = {
 };
 
 const SPECIES = [
-  "ghost",
-  "ferret",
+  "duck",
+  "goose",
+  "blob",
+  "cat",
   "dragon",
+  "octopus",
+  "owl",
   "penguin",
+  "turtle",
+  "snail",
+  "ghost",
+  "axolotl",
+  "capybara",
+  "cactus",
+  "robot",
+  "rabbit",
+  "mushroom",
+  "chonk",
+  "ferret",
   "fox",
   "otter",
   "moth",
   "salamander",
   "badger",
-  "cat",
-  "owl",
   "slime"
 ];
 

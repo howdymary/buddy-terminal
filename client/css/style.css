@@ -296,10 +296,54 @@ button {
   background: rgba(217, 119, 87, 0.08);
 }
 
+.default-buddy-grid-wrapper {
+  position: relative;
+  overflow: hidden;
+}
+
 .default-buddy-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
+}
+
+.buddy-page-controls {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.buddy-page-controls button {
+  background: rgba(55, 54, 50, 0.9);
+  border: 2px solid rgba(176, 174, 165, 0.3);
+  border-radius: 10px;
+  color: var(--ink);
+  padding: 6px 12px;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.buddy-page-controls button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.buddy-page-dots {
+  display: flex;
+  gap: 6px;
+}
+
+.buddy-page-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(176, 174, 165, 0.3);
+}
+
+.buddy-page-dot.active {
+  background: var(--accent);
 }
 
 .default-buddy-button {
@@ -727,6 +771,10 @@ button {
 
   .default-buddy-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .buddy-page-controls button {
+    padding: 8px 14px;
   }
 
   .touch-controls {

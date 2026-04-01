@@ -198,22 +198,70 @@ export class OnboardingController {
 
   renderDefaultBuddyGrid() {
     const grid = this.elements.defaultBuddyGrid;
-    grid.innerHTML = "";
+    const buddies = this.bootstrap.defaultBuddies;
+    const perPage = 8;
+    const totalPages = Math.ceil(buddies.length / perPage);
+    let currentPage = 0;
 
-    this.bootstrap.defaultBuddies.forEach((buddy) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "default-buddy-button";
-      button.dataset.buddyId = buddy.id;
-      button.innerHTML = `
-        <img src="${buddy.url}" alt="${buddy.label}">
-        <div class="buddy-label">${buddy.label}</div>
-      `;
-      button.addEventListener("click", async () => {
-        await this.selectDefaultBuddy(buddy.id);
+    const prevButton = document.getElementById("buddyPagePrev");
+    const nextButton = document.getElementById("buddyPageNext");
+    const dotsContainer = document.getElementById("buddyPageDots");
+    const controlsContainer = document.getElementById("buddyPageControls");
+
+    if (totalPages <= 1) {
+      controlsContainer.classList.add("hidden");
+    }
+
+    const renderPage = () => {
+      grid.innerHTML = "";
+      const start = currentPage * perPage;
+      const pageBuddies = buddies.slice(start, start + perPage);
+
+      pageBuddies.forEach((buddy) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "default-buddy-button";
+        button.dataset.buddyId = buddy.id;
+        if (this.state.selectedDefaultBuddy?.id === buddy.id) {
+          button.classList.add("selected");
+        }
+        button.innerHTML = `
+          <img src="${buddy.url}" alt="${buddy.label}">
+          <div class="buddy-label">${buddy.label}</div>
+        `;
+        button.addEventListener("click", async () => {
+          await this.selectDefaultBuddy(buddy.id);
+          renderPage();
+        });
+        grid.append(button);
       });
-      grid.append(button);
+
+      prevButton.disabled = currentPage === 0;
+      nextButton.disabled = currentPage >= totalPages - 1;
+
+      dotsContainer.innerHTML = "";
+      for (let i = 0; i < totalPages; i++) {
+        const dot = document.createElement("span");
+        dot.className = `buddy-page-dot${i === currentPage ? " active" : ""}`;
+        dotsContainer.append(dot);
+      }
+    };
+
+    prevButton.addEventListener("click", () => {
+      if (currentPage > 0) {
+        currentPage--;
+        renderPage();
+      }
     });
+
+    nextButton.addEventListener("click", () => {
+      if (currentPage < totalPages - 1) {
+        currentPage++;
+        renderPage();
+      }
+    });
+
+    renderPage();
   }
 
   async selectDefaultBuddy(buddyId) {
@@ -235,7 +283,7 @@ export class OnboardingController {
       button.classList.toggle("selected", button.dataset.buddyId === buddyId);
     }
 
-    this.setUploadStatus("Default buddies are aura-free, but they get you in fast.");
+    this.setUploadStatus(`${capitalize(buddy.label)} selected — aura-free, but gets you in fast.`);
     this.renderBuddyMeta(null);
     this.updateEnterState();
     this.drawPreviewSprite();

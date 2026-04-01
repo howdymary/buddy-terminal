@@ -61,7 +61,14 @@
               <div class="picker-card">
                 <p class="picker-title">Pick a buddy instead</p>
                 <p class="picker-copy">No Claude buddy handy? Grab a default sprite and jump in. Defaults are clean, cute, and aura-free.</p>
-                <div id="defaultBuddyGrid" class="default-buddy-grid"></div>
+                <div class="default-buddy-grid-wrapper">
+                  <div id="defaultBuddyGrid" class="default-buddy-grid"></div>
+                  <div id="buddyPageControls" class="buddy-page-controls">
+                    <button id="buddyPagePrev" type="button" disabled>Prev</button>
+                    <div id="buddyPageDots" class="buddy-page-dots"></div>
+                    <button id="buddyPageNext" type="button">Next</button>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -190,6 +197,6 @@
       </section>
     </div>
 
-    <script type="module" src="/js/main.js?v=5"></script>
+    <script type="module" src="/js/main.js?v=6"></script>
   </body>
 </html>
