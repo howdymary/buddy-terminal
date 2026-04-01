@@ -2,6 +2,8 @@ function heuristic(a, b) {
   return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 }
 
+const MAX_PATH_ITERATIONS = 200;
+
 function keyOf(node) {
   return `${node.x},${node.y}`;
 }
@@ -20,9 +22,13 @@ export function findPath(start, goal, { isWalkable, isOccupied }) {
   const cameFrom = new Map();
   const gScore = new Map([[keyOf(start), 0]]);
   const closed = new Set();
+  let iterations = 0;
 
   while (open.length > 0) {
-    open.sort((a, b) => a.f - b.f);
+    if ((iterations += 1) > MAX_PATH_ITERATIONS) {
+      return [];
+    }
+
     const current = open.shift();
     const currentKey = keyOf(current);
 
@@ -56,8 +62,13 @@ export function findPath(start, goal, { isWalkable, isOccupied }) {
       const score = tentativeG + heuristic(neighbor, goal);
       openScores.set(neighborKey, score);
 
-      if (!open.some((entry) => entry.x === neighbor.x && entry.y === neighbor.y)) {
-        open.push({ ...neighbor, g: tentativeG, f: score });
+      const existingIndex = open.findIndex((entry) => entry.x === neighbor.x && entry.y === neighbor.y);
+      if (existingIndex >= 0) {
+        open.splice(existingIndex, 1);
+      }
+
+      if (existingIndex < 0 || score <= (openScores.get(neighborKey) ?? Number.POSITIVE_INFINITY)) {
+        insertByScore(open, { ...neighbor, g: tentativeG, f: score });
       }
     }
   }
@@ -84,4 +95,12 @@ function neighbors(node) {
     { x: node.x - 1, y: node.y },
     { x: node.x + 1, y: node.y }
   ];
+}
+
+function insertByScore(open, candidate) {
+  let index = open.length;
+  while (index > 0 && open[index - 1].f > candidate.f) {
+    index -= 1;
+  }
+  open.splice(index, 0, candidate);
 }

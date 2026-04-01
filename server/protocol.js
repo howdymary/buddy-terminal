@@ -1,3 +1,5 @@
+import { MAP_HEIGHT, MAP_WIDTH } from "./collisionMap.js";
+
 const DIRECTION_TO_CODE = {
   down: 0,
   up: 1,
@@ -30,7 +32,7 @@ export function encodeBatch(moves) {
 
 export function decodeMove(buffer) {
   const view = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
-  if (view.length < 4) {
+  if (view.length !== 4) {
     return null;
   }
 
@@ -38,9 +40,15 @@ export function decodeMove(buffer) {
     return null;
   }
 
+  const x = view.readUInt8(1);
+  const y = view.readUInt8(2);
+  if (x >= MAP_WIDTH || y >= MAP_HEIGHT) {
+    return null;
+  }
+
   return {
-    x: view.readUInt8(1),
-    y: view.readUInt8(2),
+    x,
+    y,
     direction: CODE_TO_DIRECTION[view.readUInt8(3)] ?? "down"
   };
 }

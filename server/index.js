@@ -1,5 +1,8 @@
+process.env.UV_THREADPOOL_SIZE = process.env.UV_THREADPOOL_SIZE || "16";
+
 import fs from "node:fs";
 import http from "node:http";
+import { performance } from "node:perf_hooks";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -10,7 +13,7 @@ import { WebSocketServer } from "ws";
 import { parseBuddyCard } from "./buddyCardParser.js";
 import { sanitizeChatMessage, isFlooding } from "./chatFilter.js";
 import { ChatLog } from "./chatLog.js";
-import { getMapPayload } from "./collisionMap.js";
+import { BLOCKED_TILES, getMapPayload } from "./collisionMap.js";
 import { BuddyTerminalDb } from "./db.js";
 import { GameState } from "./gameState.js";
 import { GhostManager } from "./ghostManager.js";
@@ -30,6 +33,9 @@ const MAX_CHAT_LENGTH = 80;
 const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
 const ALLOWED_EMOTES = new Set(["👋", "❤️", "✨", "😂"]);
 const TOMBSTONE_PRUNE_INTERVAL_MS = 60_000;
+const SESSION_CREATE_LIMIT = 5;
+const SESSION_CREATE_WINDOW = 60_000;
+const WS_BUFFER_LIMIT = 65_536;
 
 const app = express();
 const server = http.createServer(app);
@@ -40,9 +46,10 @@ const spriteCache = new SpriteCache();
 const chatLog = new ChatLog();
 const db = new BuddyTerminalDb();
 const ghostManager = new GhostManager({ db, gameState, spriteCache, chatLog });
-const tokenSpawner = new TokenSpawner();
+const tokenSpawner = new TokenSpawner({ gameState });
 const defaultBuddies = loadDefaultBuddies();
 const tombstones = new Map(db.loadTombstones().map((tombstone) => [tombstone.id, tombstone]));
+const sessionCreationByIp = new Map();
 
 ghostManager.hydrate();
 
@@ -53,24 +60,42 @@ const upload = multer({
   }
 });
 
+app.set("trust proxy", 1);
 app.use(express.json({ limit: "250kb" }));
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("X-XSS-Protection", "1; mode=block");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  if (process.env.NODE_ENV === "production") {
+    res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  }
+  next();
+});
 app.use(express.static(clientRoot));
 
 app.get("/api/bootstrap", (_req, res) => {
   res.json({
     map: getMapPayload(),
     defaultBuddies,
+    blockedTiles: Array.from(BLOCKED_TILES),
+    allowedEmotes: Array.from(ALLOWED_EMOTES),
     limits: {
       maxNameLength: 16,
       maxChatLength: MAX_CHAT_LENGTH,
       maxPlayers: MAX_PLAYERS
     },
     auraSettings: {
-      enabledByDefault: true,
+      enabledByDefault: false,
       tooltipRange: 3
     },
+    rateLimits: {
+      moves: { max: 20, windowMs: 1000 },
+      chat: { max: 5, windowMs: 10_000, cooldownMs: 30_000 },
+      emote: { max: 3, windowMs: 5000, cooldownMs: 10_000 }
+    },
     tokenSettings: {
-      maxActiveLines: 6,
+      maxActiveLines: tokenSpawner.maxActiveLines,
       respawnDelayMs: 30_000
     },
     ghostSettings: {
@@ -146,6 +171,16 @@ app.get("/sprites/:hash.png", (req, res) => {
 });
 
 app.post("/api/session", (req, res) => {
+  const ip = req.ip || req.socket.remoteAddress || "unknown";
+  const currentTime = Date.now();
+  const history = sessionCreationByIp.get(ip) || [];
+  const recent = history.filter((timestamp) => currentTime - timestamp < SESSION_CREATE_WINDOW);
+  if (recent.length >= SESSION_CREATE_LIMIT) {
+    return res.status(429).json({ error: "Too many sessions. Try again in a minute." });
+  }
+  recent.push(currentTime);
+  sessionCreationByIp.set(ip, recent);
+
   if (gameState.getOnlineCount() >= MAX_PLAYERS) {
     return res.status(503).json({
       error: `World is full! ${gameState.getOnlineCount()}/${MAX_PLAYERS} explorers online. Try again in a moment.`
@@ -253,8 +288,20 @@ wss.on("connection", (ws, request) => {
     gameState.setHeartbeat(player.id);
 
     if (isBinary) {
+      if (rawMessage.length !== 4) {
+        return;
+      }
+
       const rate = currentPlayer.rateLimits.moves.allow();
       if (!rate.ok) {
+        const noticeNow = performance.now();
+        if (!currentPlayer._lastMoveThrottleNotice || noticeNow - currentPlayer._lastMoveThrottleNotice > 3000) {
+          sendJson(ws, {
+            type: "chat_notice",
+            message: "Moving too fast! Slow down a bit."
+          });
+          currentPlayer._lastMoveThrottleNotice = noticeNow;
+        }
         return;
       }
 
@@ -532,7 +579,7 @@ function handleGhostEviction(eviction) {
 }
 
 function handleTokenCollection(player) {
-  const collected = tokenSpawner.collectAtPosition(player.x, player.y, player);
+  const collected = tokenSpawner.collectAtPosition(player.id, player.x, player.y);
   if (!collected) {
     return;
   }
@@ -588,7 +635,11 @@ function broadcastJsonToNearby(sourcePlayer, payload) {
 }
 
 function sendJson(ws, payload) {
-  if (ws.readyState !== 1) {
+  if (!ws || ws.readyState !== 1) {
+    return;
+  }
+
+  if (ws.bufferedAmount > WS_BUFFER_LIMIT) {
     return;
   }
 

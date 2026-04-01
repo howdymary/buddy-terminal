@@ -1,3 +1,6 @@
+import { performance } from "node:perf_hooks";
+
+import { sanitizeChatMessage } from "./chatFilter.js";
 import { MAP_HEIGHT, MAP_WIDTH, SPAWN_POINT, isWalkable } from "./collisionMap.js";
 import { findPath } from "./pathfinding.js";
 import { pickGhostPhrase } from "./phrasePools.js";
@@ -7,7 +10,9 @@ const MAP_CENTER = {
   y: Math.floor(MAP_HEIGHT / 2)
 };
 
-export function updateGhostEntity(ghost, gameState, now = Date.now()) {
+const now = () => performance.now();
+
+export function updateGhostEntity(ghost, gameState, currentTime = now()) {
   if (!ghost.isGhost) {
     return { moved: false, chatted: null, becameDormant: false };
   }
@@ -22,13 +27,13 @@ export function updateGhostEntity(ghost, gameState, now = Date.now()) {
     return { moved: false, chatted: null, becameDormant };
   }
 
-  if (!ghost.ghostData?.wanderTarget || now >= (ghost.ghostData.nextDecisionAt ?? 0)) {
+  if (!ghost.ghostData?.wanderTarget || currentTime >= (ghost.ghostData.nextDecisionAt ?? 0)) {
     ghost.ghostData.wanderTarget = pickWanderTarget(ghost, nearestLive);
-    ghost.ghostData.nextDecisionAt = now + 5000 + Math.floor(Math.random() * 10_000);
+    ghost.ghostData.nextDecisionAt = currentTime + 5000 + Math.floor(Math.random() * 10_000);
   }
 
   let moved = false;
-  const shouldStep = now >= (ghost.ghostData.nextStepAt ?? 0);
+  const shouldStep = currentTime >= (ghost.ghostData.nextStepAt ?? 0);
   if (shouldStep && ghost.ghostData.wanderTarget) {
     const path = findPath(
       { x: ghost.x, y: ghost.y },
@@ -46,20 +51,22 @@ export function updateGhostEntity(ghost, gameState, now = Date.now()) {
       moved = result.ok;
     }
 
-    ghost.ghostData.nextStepAt = now + 180;
+    ghost.ghostData.nextStepAt = currentTime + 180;
   }
 
   let chatted = null;
-  if (now >= (ghost.ghostData.nextSpeechAt ?? 0)) {
-    chatted = pickGhostPhrase(ghost);
-    ghost.ghostData.nextSpeechAt = now + 30_000 + Math.floor(Math.random() * 90_000);
-    ghost.ghostData.lastSpoke = now;
+  if (currentTime >= (ghost.ghostData.nextSpeechAt ?? 0)) {
+    const phrase = pickGhostPhrase(ghost);
+    const sanitized = sanitizeChatMessage(phrase);
+    chatted = sanitized.ok ? sanitized.cleaned : phrase;
+    ghost.ghostData.nextSpeechAt = currentTime + 30_000 + Math.floor(Math.random() * 90_000);
+    ghost.ghostData.lastSpoke = currentTime;
   }
 
   return { moved, chatted, becameDormant };
 }
 
-export function maybeReactToNearbyChat(ghost, speaker, now = Date.now()) {
+export function maybeReactToNearbyChat(ghost, speaker, now = performance.now()) {
   if (!ghost.isGhost || ghost.isDormant) {
     return null;
   }
@@ -84,9 +91,10 @@ export function maybeReactToNearbyChat(ghost, speaker, now = Date.now()) {
 
   if (Math.random() < 0.15) {
     ghost.ghostData.reactCooldownUntil = now + 30_000;
+    const sanitized = sanitizeChatMessage(`hey ${speaker.name}! 👋`);
     return {
       type: "chat",
-      value: `hey ${speaker.name}! 👋`
+      value: sanitized.ok ? sanitized.cleaned : "hey there! 👋"
     };
   }
 

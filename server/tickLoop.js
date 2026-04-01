@@ -1,7 +1,16 @@
+import { performance } from "node:perf_hooks";
+
 import { encodeBatch } from "./protocol.js";
 
+const WS_BUFFER_LIMIT = 65_536;
+const now = () => performance.now();
+
 function sendJson(ws, payload) {
-  if (ws.readyState !== 1) {
+  if (!ws || ws.readyState !== 1) {
+    return;
+  }
+
+  if (ws.bufferedAmount > WS_BUFFER_LIMIT) {
     return;
   }
 
@@ -22,6 +31,7 @@ export function startTickLoop({
   let currentTick = 0;
 
   const interval = setInterval(() => {
+    const currentTime = now();
     gameState.clearExpiredSpeech();
 
     const timedOutPlayers = gameState.getTimedOutPlayers();
@@ -30,12 +40,13 @@ export function startTickLoop({
     }
 
     ghostManager?.updateGhosts({
+      now: currentTime,
       onGhostChat,
       onGhostEmote,
       onGhostEvicted
     });
 
-    tokenSpawner?.tick(Date.now(), {
+    tokenSpawner?.tick(currentTime, {
       onTokensSpawned
     });
 
@@ -52,7 +63,11 @@ export function startTickLoop({
             direction: entity.direction
           }));
 
-        if (batchedMoves.length > 0 && recipient.ws.readyState === 1) {
+        if (
+          batchedMoves.length > 0 &&
+          recipient.ws.readyState === 1 &&
+          recipient.ws.bufferedAmount <= WS_BUFFER_LIMIT
+        ) {
           recipient.ws.send(encodeBatch(batchedMoves));
         }
       }

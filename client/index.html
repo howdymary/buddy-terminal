@@ -115,7 +115,16 @@
       </section>
 
       <section id="gameScreen" class="game-screen hidden">
-        <canvas id="gameCanvas" width="1280" height="720"></canvas>
+        <canvas
+          id="gameCanvas"
+          width="1280"
+          height="720"
+          role="img"
+          aria-label="Buddy Terminal game world — a pixel-art campus with players walking around, chatting, and collecting tokens"
+        >
+          Your browser does not support canvas. Buddy Terminal requires a modern browser.
+        </canvas>
+        <div id="a11y-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
 
         <div class="hud">
           <div class="hud-top">

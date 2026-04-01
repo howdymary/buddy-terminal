@@ -1,5 +1,11 @@
 import sharp from "sharp";
 
+const MAGIC_BYTES = {
+  png: Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+  jpeg: Buffer.from([0xff, 0xd8, 0xff]),
+  gif: Buffer.from([0x47, 0x49, 0x46])
+};
+
 const SPECIES = [
   "ghost",
   "ferret",
@@ -24,12 +30,23 @@ const RARITIES = [
 ];
 
 const STAT_KEYS = ["debugging", "patience", "chaos", "wisdom", "snark"];
+const MAX_CONCURRENT_OCR = 2;
+
+let activeOcrCount = 0;
 
 export async function parseBuddyCard(buffer) {
+  if (!validateMagicBytes(buffer)) {
+    throw new Error("Only valid PNG, JPG, or GIF uploads are supported.");
+  }
+
   const image = sharp(buffer, { animated: false }).rotate();
   const metadata = await image.metadata();
   const width = metadata.width ?? 0;
   const height = metadata.height ?? 0;
+
+  if (width > 4096 || height > 4096) {
+    throw new Error("Image dimensions exceed 4096×4096 limit");
+  }
 
   if (width < 100 || height < 100) {
     throw new Error("That doesn't look like a /buddy screenshot. Try taking a full screenshot of your buddy card!");
@@ -140,15 +157,37 @@ async function extractDominantColor(image, cropRegion) {
 }
 
 async function extractText(buffer) {
+  if (activeOcrCount >= MAX_CONCURRENT_OCR) {
+    console.warn("OCR queue full, skipping");
+    return "";
+  }
+
+  let worker = null;
+  activeOcrCount += 1;
+
   try {
     const { createWorker } = await import("tesseract.js");
-    const worker = await createWorker("eng");
-    const result = await worker.recognize(buffer, {}, { blocks: false });
-    await worker.terminate();
+    worker = await createWorker("eng");
+    const timeout = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error("OCR timeout")), 5000);
+    });
+    const result = await Promise.race([
+      worker.recognize(buffer, {}, { blocks: false }),
+      timeout
+    ]);
     return result.data?.text ?? "";
   } catch (error) {
-    console.warn("buddy OCR unavailable, falling back to common metadata", error.message);
+    console.warn("OCR failed or timed out:", error.message);
     return "";
+  } finally {
+    activeOcrCount -= 1;
+    if (worker) {
+      try {
+        await worker.terminate();
+      } catch {
+        // Ignore worker shutdown failures during OCR fallback.
+      }
+    }
   }
 }
 
@@ -239,6 +278,18 @@ function inferStats(text) {
     stats[key] = match ? clamp(Number.parseInt(match[1], 10), 0, 99) : fallbackStat(key);
   }
   return stats;
+}
+
+function validateMagicBytes(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 4) {
+    return false;
+  }
+
+  return (
+    buffer.subarray(0, 4).equals(MAGIC_BYTES.png) ||
+    buffer.subarray(0, 3).equals(MAGIC_BYTES.jpeg) ||
+    buffer.subarray(0, 3).equals(MAGIC_BYTES.gif)
+  );
 }
 
 function fallbackStat(key) {

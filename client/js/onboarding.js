@@ -239,7 +239,7 @@ export class OnboardingController {
       button.classList.remove("selected");
     }
 
-    this.setUploadStatus("Analyzing your buddy card...");
+    this.setUploadStatus("⏳ Analyzing your buddy card...");
     this.renderBuddyMeta(null);
     this.updateEnterState();
     this.drawPreviewSprite();
@@ -264,7 +264,10 @@ export class OnboardingController {
       .catch((error) => {
         this.state.processedUploadPromise = null;
         if (this.state.uploadedFile === currentFile) {
-          this.setUploadStatus(error.message || "Upload processing failed.", true);
+          this.setUploadStatus(
+            error.message || "❌ Couldn't read that image. Try a cleaner screenshot, or pick a default buddy below.",
+            true
+          );
         }
         throw error;
       });
@@ -379,7 +382,9 @@ export class OnboardingController {
 
   setUploadStatus(message, isError = false) {
     this.elements.uploadStatus.textContent = message || "";
-    this.elements.uploadStatus.classList.toggle("error", Boolean(isError));
+    this.elements.uploadStatus.className = isError
+      ? "status-line upload-status upload-error"
+      : "status-line upload-status";
   }
 
   renderBuddyMeta(meta, hasRealBuddy = false) {

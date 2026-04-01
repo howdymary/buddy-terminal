@@ -29,6 +29,7 @@ export class InputController {
     this.onCloseChat = null;
     this.onEmote = null;
     this.onToggleChatPanel = null;
+    this.onHelp = null;
     this.isTextInputActive = null;
   }
 
@@ -47,6 +48,7 @@ export class InputController {
     this.onCloseChat = callbacks.onCloseChat;
     this.onEmote = callbacks.onEmote;
     this.onToggleChatPanel = callbacks.onToggleChatPanel;
+    this.onHelp = callbacks.onHelp;
     this.isTextInputActive = callbacks.isTextInputActive;
   }
 
@@ -104,6 +106,12 @@ export class InputController {
     if (event.key === "t" || event.key === "T") {
       event.preventDefault();
       this.onToggleChatPanel?.();
+      return;
+    }
+
+    if (event.key === "h" || event.key === "H") {
+      event.preventDefault();
+      this.onHelp?.();
       return;
     }
 

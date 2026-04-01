@@ -1,3 +1,7 @@
+import { performance } from "node:perf_hooks";
+
+const now = () => performance.now();
+
 export class SlidingWindowRateLimiter {
   constructor(limit, intervalMs, cooldownMs = 0) {
     this.limit = limit;
@@ -7,28 +11,28 @@ export class SlidingWindowRateLimiter {
     this.cooldownUntil = 0;
   }
 
-  allow(now = Date.now()) {
-    if (now < this.cooldownUntil) {
+  allow(currentTime = now()) {
+    if (currentTime < this.cooldownUntil) {
       return {
         ok: false,
-        cooldownRemainingMs: this.cooldownUntil - now
+        cooldownRemainingMs: this.cooldownUntil - currentTime
       };
     }
 
-    this.events = this.events.filter((timestamp) => now - timestamp < this.intervalMs);
+    this.events = this.events.filter((timestamp) => currentTime - timestamp < this.intervalMs);
     if (this.events.length >= this.limit) {
       if (this.cooldownMs > 0) {
-        this.cooldownUntil = now + this.cooldownMs;
+        this.cooldownUntil = currentTime + this.cooldownMs;
         this.events = [];
       }
 
       return {
         ok: false,
-        cooldownRemainingMs: this.cooldownUntil > now ? this.cooldownUntil - now : 0
+        cooldownRemainingMs: this.cooldownUntil > currentTime ? this.cooldownUntil - currentTime : 0
       };
     }
 
-    this.events.push(now);
+    this.events.push(currentTime);
     return { ok: true, cooldownRemainingMs: 0 };
   }
 }

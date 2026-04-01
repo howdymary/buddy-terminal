@@ -49,8 +49,15 @@ const BLOCKED_PATTERNS = BLOCKED_WORDS.map((word) => {
 });
 
 export function sanitizeChatMessage(message) {
-  const raw = typeof message === "string" ? message : "";
-  const stripped = raw
+  let text = typeof message === "string" ? message.trim() : "";
+  if (!text) {
+    return { ok: false, reason: "empty" };
+  }
+
+  text = text.replace(/[\u200B\u200C\u200D\u200E\u200F\u202A-\u202E\u2060\u2061\u2062\u2063\u2064\uFEFF\u00AD]/g, "");
+  text = text.normalize("NFKC");
+
+  const stripped = text
     .replace(/<[^>]*>/g, "")
     .replace(/\s+/g, " ")
     .trim()

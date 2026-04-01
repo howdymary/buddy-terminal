@@ -145,7 +145,7 @@ function fillRect(tiles, startX, startY, width, height, tileId) {
 
 export const mapTiles = createBaseMap();
 
-const BLOCKED_TILES = new Set([
+export const BLOCKED_TILES = new Set([
   TILE_IDS.SERVER_RACK,
   TILE_IDS.NEURAL_FOUNTAIN,
   TILE_IDS.FIREWALL_BORDER,

@@ -1,9 +1,13 @@
 import crypto from "node:crypto";
+import { performance } from "node:perf_hooks";
 import { v4 as uuidv4 } from "uuid";
 
 import { SPAWN_POINT, isWalkable } from "./collisionMap.js";
 import { createPlayerRateLimits } from "./rateLimiter.js";
 import { SpatialGrid } from "./spatialGrid.js";
+
+const SPAWN_RADIUS = 5;
+const monoNow = () => performance.now();
 
 function generateToken() {
   return crypto.randomBytes(24).toString("hex");
@@ -11,6 +15,10 @@ function generateToken() {
 
 function createIdentityKey({ name, spriteHash, spriteRef }) {
   return `${name}::${spriteHash || spriteRef || "default"}`;
+}
+
+if (!isWalkable(SPAWN_POINT.x, SPAWN_POINT.y)) {
+  throw new Error("SPAWN_POINT is not walkable — check collisionMap");
 }
 
 export class GameState {
@@ -71,13 +79,14 @@ export class GameState {
     }
 
     const id = uuidv4();
+    const spawn = findSafeSpawn(this.players);
     const player = this.buildLiveEntity({
       id,
       playerIndex: this.playerIndexCounter,
       ws,
       session,
-      x: SPAWN_POINT.x,
-      y: SPAWN_POINT.y,
+      x: spawn.x,
+      y: spawn.y,
       direction: "down"
     });
 
@@ -89,14 +98,21 @@ export class GameState {
   }
 
   restoreGhost(record) {
+    const restorePoint = isWalkable(record.x, record.y)
+      ? { x: record.x, y: record.y }
+      : findSafeSpawn(this.players);
+    if (restorePoint.x !== record.x || restorePoint.y !== record.y) {
+      console.warn(`Ghost ${record.id} relocated to spawn (was in wall)`);
+    }
+
     const ghost = {
       id: record.id,
       playerIndex: record.playerIndex || this.playerIndexCounter,
       name: record.name,
-      x: record.x,
-      y: record.y,
-      renderX: record.x,
-      renderY: record.y,
+      x: restorePoint.x,
+      y: restorePoint.y,
+      renderX: restorePoint.x,
+      renderY: restorePoint.y,
       direction: record.direction || "down",
       spriteType: record.spriteHash ? "custom" : "default",
       spriteRef: record.spriteRef,
@@ -110,9 +126,9 @@ export class GameState {
         personality: record.ghostData?.personality || "universal",
         lastSpoke: record.ghostData?.lastSpoke || 0,
         wanderTarget: record.ghostData?.wanderTarget || null,
-        nextSpeechAt: Date.now() + 5000 + Math.floor(Math.random() * 10_000),
-        nextDecisionAt: Date.now() + 2000 + Math.floor(Math.random() * 4000),
-        nextStepAt: Date.now() + 500,
+        nextSpeechAt: monoNow() + 5000 + Math.floor(Math.random() * 10_000),
+        nextDecisionAt: monoNow() + 2000 + Math.floor(Math.random() * 4000),
+        nextStepAt: monoNow() + 500,
         reactCooldownUntil: 0
       },
       isGhost: true,
@@ -131,7 +147,7 @@ export class GameState {
       rateLimits: null,
       recentChatInputs: [],
       totalVisits: record.totalVisits ?? 1,
-      tokenCount: 0,
+      tokenCount: record.tokenCount ?? 0,
       ws: null
     };
 
@@ -148,6 +164,8 @@ export class GameState {
       return null;
     }
 
+    const savedTokenCount = entity.ghostData?.savedTokenCount ?? entity.tokenCount ?? 0;
+
     entity.isGhost = false;
     entity.isConnected = true;
     entity.isDormant = false;
@@ -163,7 +181,7 @@ export class GameState {
     entity.hasRealBuddy = session.hasRealBuddy;
     entity.buddyMeta = session.buddyMeta;
     entity.identityKey = session.identityKey;
-    entity.lastHeartbeat = Date.now();
+    entity.lastHeartbeat = monoNow();
     entity.lastUpdate = Date.now();
     entity.chatMessage = "";
     entity.chatExpiresAt = 0;
@@ -173,7 +191,7 @@ export class GameState {
     entity.recentChatInputs = [];
     entity.ghostData = null;
     entity.totalVisits = (entity.totalVisits ?? 0) + 1;
-    entity.tokenCount = 0;
+    entity.tokenCount = savedTokenCount;
     this.grid.addOrUpdatePlayer(id, entity.x, entity.y);
     this.dirtyPlayers.add(id);
     return entity;
@@ -208,11 +226,12 @@ export class GameState {
       originalPlayerId: entity.id,
       createdAt: new Date().toISOString(),
       personality,
+      savedTokenCount: entity.tokenCount ?? 0,
       lastSpoke: 0,
       wanderTarget: null,
-      nextSpeechAt: Date.now() + 8000 + Math.floor(Math.random() * 10_000),
-      nextDecisionAt: Date.now() + 2500 + Math.floor(Math.random() * 4000),
-      nextStepAt: Date.now() + 500,
+      nextSpeechAt: monoNow() + 8000 + Math.floor(Math.random() * 10_000),
+      nextDecisionAt: monoNow() + 2500 + Math.floor(Math.random() * 4000),
+      nextStepAt: monoNow() + 500,
       reactCooldownUntil: 0
     };
     entity.ws = null;
@@ -252,11 +271,11 @@ export class GameState {
   }
 
   getTimedOutPlayers(timeoutMs = 30_000) {
-    const now = Date.now();
+    const currentTime = monoNow();
     return Array.from(this.players.values()).filter((entity) => (
       !entity.isGhost &&
       entity.isConnected &&
-      now - entity.lastHeartbeat > timeoutMs
+      currentTime - entity.lastHeartbeat > timeoutMs
     ));
   }
 
@@ -277,8 +296,14 @@ export class GameState {
       return { ok: false, reason: "blocked" };
     }
 
-    for (const other of this.players.values()) {
-      if (other.id !== id && other.x === nextX && other.y === nextY) {
+    const nearbyIds = this.grid.getPlayersInCell(nextX, nextY);
+    for (const otherId of nearbyIds) {
+      if (otherId === id) {
+        continue;
+      }
+
+      const other = this.players.get(otherId);
+      if (other && other.x === nextX && other.y === nextY) {
         return { ok: false, reason: "occupied" };
       }
     }
@@ -297,7 +322,7 @@ export class GameState {
     if (!entity || entity.isGhost) {
       return;
     }
-    entity.lastHeartbeat = Date.now();
+    entity.lastHeartbeat = monoNow();
   }
 
   setChat(id, message, durationMs = 5000) {
@@ -349,8 +374,10 @@ export class GameState {
   }
 
   isOccupiedTile(x, y, ignoreId = null) {
-    for (const entity of this.players.values()) {
-      if (entity.id !== ignoreId && entity.x === x && entity.y === y) {
+    const nearbyIds = this.grid.getPlayersInCell(x, y);
+    for (const entityId of nearbyIds) {
+      const entity = this.players.get(entityId);
+      if (entity && entity.id !== ignoreId && entity.x === x && entity.y === y) {
         return true;
       }
     }
@@ -428,7 +455,7 @@ export class GameState {
       disconnectedAt: null,
       identityKey: session.identityKey,
       ws,
-      lastHeartbeat: Date.now(),
+      lastHeartbeat: monoNow(),
       lastUpdate: Date.now(),
       chatMessage: "",
       chatExpiresAt: 0,
@@ -440,4 +467,25 @@ export class GameState {
       tokenCount: 0
     };
   }
+}
+
+function findSafeSpawn(players) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const x = SPAWN_POINT.x + Math.floor(Math.random() * SPAWN_RADIUS * 2) - SPAWN_RADIUS;
+    const y = SPAWN_POINT.y + Math.floor(Math.random() * SPAWN_RADIUS * 2) - SPAWN_RADIUS;
+    if (isWalkable(x, y) && !isOccupied(x, y, players)) {
+      return { x, y };
+    }
+  }
+
+  return { x: SPAWN_POINT.x, y: SPAWN_POINT.y };
+}
+
+function isOccupied(x, y, players) {
+  for (const entity of players.values()) {
+    if (entity.x === x && entity.y === y) {
+      return true;
+    }
+  }
+  return false;
 }

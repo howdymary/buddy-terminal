@@ -71,4 +71,9 @@ export class SpatialGrid {
 
     return nearby;
   }
+
+  getPlayersInCell(x, y) {
+    const key = this.getCellKey(x, y);
+    return this.cells.get(key) ?? new Set();
+  }
 }

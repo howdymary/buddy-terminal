@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { performance } from "node:perf_hooks";
 
 import { TILE_IDS, MAP_HEIGHT, MAP_WIDTH, isPathTile, mapTiles } from "./collisionMap.js";
 
@@ -19,11 +20,17 @@ const CARDINALS = [
 ];
 
 export class TokenSpawner {
-  constructor() {
+  constructor({ gameState }) {
+    this.gameState = gameState;
     this.tokens = new Map();
     this.lines = new Map();
     this.pendingRespawns = [];
     this.spawnInitialLines();
+  }
+
+  get maxActiveLines() {
+    const playerCount = this.gameState?.getOnlineCount?.() ?? 0;
+    return Math.min(12, 6 + Math.floor(playerCount / 25));
   }
 
   spawnInitialLines() {
@@ -49,7 +56,7 @@ export class TokenSpawner {
     this.pendingRespawns = waiting;
 
     for (const _respawn of readyRespawns) {
-      if (this.lines.size >= TOKEN_CONFIG.maxActiveLines) {
+      if (this.lines.size >= this.maxActiveLines) {
         this.pendingRespawns.push(_respawn);
         continue;
       }
@@ -61,16 +68,18 @@ export class TokenSpawner {
     }
   }
 
-  collectAtPosition(x, y, player) {
+  collectAtPosition(playerId, x, y) {
+    const player = this.gameState?.getPlayer?.(playerId);
     if (!player || player.isGhost) {
       return null;
     }
 
     const token = this.findTokenAt(x, y);
-    if (!token) {
+    if (!token || token._collecting) {
       return null;
     }
 
+    token._collecting = true;
     this.tokens.delete(token.id);
     player.tokenCount = (player.tokenCount ?? 0) + 1;
 
@@ -82,7 +91,7 @@ export class TokenSpawner {
         lineCleared = line.id;
         this.lines.delete(line.id);
         this.pendingRespawns.push({
-          readyAt: Date.now() + TOKEN_CONFIG.respawnDelayMs
+          readyAt: performance.now() + TOKEN_CONFIG.respawnDelayMs
         });
       }
     }
@@ -108,7 +117,7 @@ export class TokenSpawner {
   }
 
   trySpawnLine() {
-    if (this.lines.size >= TOKEN_CONFIG.maxActiveLines) {
+    if (this.lines.size >= this.maxActiveLines) {
       return [];
     }
 

@@ -259,6 +259,16 @@ button {
   color: var(--danger);
 }
 
+.upload-status {
+  color: var(--ink-muted);
+}
+
+.upload-error {
+  color: #e74c3c;
+  font-size: 14px;
+  font-weight: bold;
+}
+
 .step-title {
   margin: 0 0 10px;
   font-size: 12px;
@@ -416,6 +426,15 @@ button {
   height: 100%;
   display: block;
   image-rendering: pixelated;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
 }
 
 .hud {
@@ -685,6 +704,12 @@ button {
   .chat-panel {
     width: calc(100vw - 36px);
     bottom: 170px;
+  }
+
+  .chat-bar {
+    position: sticky;
+    bottom: 0;
+    z-index: 100;
   }
 
   .pixel-title {

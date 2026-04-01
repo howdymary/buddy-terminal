@@ -76,6 +76,17 @@ export class BuddyTerminalDb {
       CREATE INDEX IF NOT EXISTS idx_tombstones_expires
         ON tombstones(expires_at);
     `);
+
+    this.ensureColumn("ghost_buddies", "token_count", "INTEGER DEFAULT 0");
+  }
+
+  ensureColumn(tableName, columnName, definition) {
+    const columns = this.db.prepare(`PRAGMA table_info(${tableName})`).all();
+    if (columns.some((column) => column.name === columnName)) {
+      return;
+    }
+
+    this.db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
   }
 
   prepare() {
@@ -83,11 +94,11 @@ export class BuddyTerminalDb {
       INSERT INTO ghost_buddies (
         id, identity_key, player_index, display_name, buddy_name, sprite_hash, sprite_ref, sprite_format,
         rarity, rarity_stars, species, dominant_color, stats_json, personality, has_real_buddy,
-        last_x, last_y, last_direction, last_active, total_visits, is_evicted
+        last_x, last_y, last_direction, last_active, total_visits, token_count, is_evicted
       ) VALUES (
         @id, @identity_key, @player_index, @display_name, @buddy_name, @sprite_hash, @sprite_ref, @sprite_format,
         @rarity, @rarity_stars, @species, @dominant_color, @stats_json, @personality, @has_real_buddy,
-        @last_x, @last_y, @last_direction, @last_active, @total_visits, 0
+        @last_x, @last_y, @last_direction, @last_active, @total_visits, @token_count, 0
       )
       ON CONFLICT(id) DO UPDATE SET
         identity_key = excluded.identity_key,
@@ -109,6 +120,7 @@ export class BuddyTerminalDb {
         last_direction = excluded.last_direction,
         last_active = excluded.last_active,
         total_visits = excluded.total_visits,
+        token_count = excluded.token_count,
         is_evicted = 0
     `);
 
@@ -203,6 +215,12 @@ export class BuddyTerminalDb {
       WHERE ghost_id = ?
       RETURNING id
     `);
+
+    this.batchUpsertGhostsTx = this.db.transaction((ghosts) => {
+      for (const ghost of ghosts) {
+        this.upsertGhostStmt.run(serializeGhostEntity(ghost));
+      }
+    });
   }
 
   saveSprite(hash, entry) {
@@ -236,6 +254,14 @@ export class BuddyTerminalDb {
 
   upsertGhost(entity) {
     this.upsertGhostStmt.run(serializeGhostEntity(entity));
+  }
+
+  batchUpsertGhosts(ghosts) {
+    if (!Array.isArray(ghosts) || ghosts.length === 0) {
+      return;
+    }
+
+    this.batchUpsertGhostsTx(ghosts);
   }
 
   markGhostVisited(identityKey) {
@@ -322,7 +348,8 @@ function serializeGhostEntity(entity) {
     last_y: entity.y,
     last_direction: entity.direction,
     last_active: new Date().toISOString(),
-    total_visits: entity.totalVisits ?? 1
+    total_visits: entity.totalVisits ?? 1,
+    token_count: entity.tokenCount ?? entity.ghostData?.savedTokenCount ?? 0
   };
 }
 
@@ -340,6 +367,7 @@ function deserializeGhostRow(row) {
     spriteFormat: row.sprite_format,
     hasRealBuddy: Boolean(row.has_real_buddy),
     totalVisits: row.total_visits ?? 1,
+    tokenCount: row.token_count ?? 0,
     buddyMeta: {
       buddyName: row.buddy_name ?? row.display_name,
       rarity: row.rarity ?? "common",

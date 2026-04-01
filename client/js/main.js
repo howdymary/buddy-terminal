@@ -10,7 +10,8 @@ import { buildSpriteSheetFromUrl, loadSpriteSheetAsset } from "./spriteGen.js";
 import { TokenHUD } from "./tokenHUD.js";
 import { bindTouchControls } from "./touchControls.js";
 
-const BLOCKED_TILES = new Set([2, 3, 4, 5, 7, 8, 10]);
+const DEFAULT_BLOCKED_TILES = [2, 3, 4, 5, 7, 8, 10];
+const DEFAULT_ALLOWED_EMOTES = ["👋", "❤️", "✨", "😂"];
 
 const state = {
   bootstrap: null,
@@ -28,10 +29,15 @@ const state = {
   chatPanel: null,
   tokenHud: null,
   chatOpen: false,
-  auraEnabled: true,
+  auraEnabled: false,
   heartbeatTimer: null,
   hoveredPlayerId: null,
   hoveredTombstoneId: null,
+  blockedTiles: new Set(DEFAULT_BLOCKED_TILES),
+  allowedEmotes: DEFAULT_ALLOWED_EMOTES,
+  rateLimits: null,
+  hasSeenGhostExplainer: false,
+  hasSeenAuraWarning: false,
   tutorialBubble: {
     text: "",
     expiresAt: 0,
@@ -51,11 +57,15 @@ async function init() {
     onCloseChat: closeChat,
     onEmote: sendEmote,
     onToggleChatPanel: toggleChatPanel,
+    onHelp: showControlsHelp,
     isTextInputActive: () => state.chatOpen
   });
   state.input.attach();
 
-  state.auraEnabled = state.bootstrap.auraSettings?.enabledByDefault ?? true;
+  state.blockedTiles = new Set(state.bootstrap.blockedTiles || DEFAULT_BLOCKED_TILES);
+  state.allowedEmotes = state.bootstrap.allowedEmotes || DEFAULT_ALLOWED_EMOTES;
+  state.rateLimits = state.bootstrap.rateLimits || null;
+  state.auraEnabled = state.bootstrap.auraSettings?.enabledByDefault ?? false;
   state.chatPanel = new ChatPanel({
     root: document.getElementById("chatPanel"),
     list: document.getElementById("chatPanelMessages"),
@@ -123,15 +133,18 @@ function handleNetworkJson(message) {
     case "player_joined":
       upsertPlayer(message.player);
       updateOnlineCount(message.onlineCount);
-      break;
-    case "player_left":
-      removePlayer(message.id);
-      updateOnlineCount(message.onlineCount);
+      if (message.player?.id !== state.localPlayerId) {
+        announce("A new player joined the world");
+      }
       break;
     case "ghost_spawn":
       upsertPlayer(message.ghost);
       if (message.ghost?.id) {
         setBubble(message.ghost.id, "boo... still here ✨", "chat");
+      }
+      if (!state.hasSeenGhostExplainer) {
+        state.hasSeenGhostExplainer = true;
+        state.chatPanel.addNotice("👻 That's a ghost buddy! Players leave behind ghosts when they disconnect. They'll wake up when they return.");
       }
       updateOnlineCount(message.onlineCount);
       break;
@@ -183,12 +196,14 @@ function handleNetworkJson(message) {
       if (message.entry) {
         state.chatPanel.addEntry(message.entry);
       }
+      announce(`${getSpeakerName(message.id)} says: ${message.message}`);
       break;
     case "ghost_chat":
       setBubble(message.id, message.message, "chat");
       if (message.entry) {
         state.chatPanel.addEntry(message.entry);
       }
+      announce(`${getSpeakerName(message.id)} says: ${message.message}`);
       break;
     case "player_emote":
       setBubble(message.id, message.emote, "emote");
@@ -256,6 +271,11 @@ function hydrateState(message) {
   state.tokenHud.setCount(message.selfTokenCount || 0);
   updateOnlineCount(message.onlineCount);
   showTutorialBubble(message.map.sign.message);
+
+  if (!state.hasSeenGhostExplainer && message.players.some((player) => player.isGhost)) {
+    state.hasSeenGhostExplainer = true;
+    state.chatPanel.addNotice("👻 That's a ghost buddy! Players leave behind ghosts when they disconnect. They'll wake up when they return.");
+  }
 
   if (message.players.length > 1) {
     state.camera.brieflyPan();
@@ -454,13 +474,21 @@ function setupChatControls() {
   const chatInput = document.getElementById("chatInput");
   const sendButton = document.getElementById("sendChatButton");
   const chatCounter = document.getElementById("chatCounter");
+  const maxChatLength = state.bootstrap?.limits?.maxChatLength ?? 80;
+
+  chatInput.maxLength = maxChatLength;
 
   const updateCounter = () => {
-    chatCounter.textContent = `${chatInput.value.length}/80`;
+    chatCounter.textContent = `${chatInput.value.length}/${maxChatLength}`;
   };
 
   sendButton.addEventListener("click", sendChat);
   chatInput.addEventListener("input", updateCounter);
+  chatInput.addEventListener("focus", () => {
+    setTimeout(() => {
+      chatInput.scrollIntoView({ behavior: "smooth", block: "end" });
+    }, 300);
+  });
 
   chatInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
@@ -475,7 +503,7 @@ function setupChatControls() {
   });
 
   function sendChat() {
-    const text = chatInput.value.trim().slice(0, 80);
+    const text = chatInput.value.trim().slice(0, maxChatLength);
     if (!text) {
       closeChat();
       return;
@@ -513,6 +541,10 @@ function setupHudControls() {
 
   toggleAurasButton.addEventListener("click", () => {
     state.auraEnabled = !state.auraEnabled;
+    if (state.auraEnabled && !state.hasSeenAuraWarning) {
+      state.chatPanel.addNotice("✨ Auras enabled! Disable anytime with the toggle if the pulsing is uncomfortable.");
+      state.hasSeenAuraWarning = true;
+    }
     updateAuraToggle();
   });
 
@@ -585,6 +617,9 @@ function toggleChatPanel() {
 }
 
 function sendEmote(emote) {
+  if (!state.allowedEmotes.includes(emote)) {
+    return;
+  }
   state.network?.sendEmote(emote);
 }
 
@@ -673,7 +708,7 @@ function isWalkableLocal(x, y, selfId) {
     return false;
   }
 
-  if (BLOCKED_TILES.has(state.map.tiles[y][x])) {
+  if (state.blockedTiles.has(state.map.tiles[y][x])) {
     return false;
   }
 
@@ -755,4 +790,31 @@ async function fetchJson(url) {
   }
 
   return response.json();
+}
+
+function showControlsHelp() {
+  state.chatPanel?.addNotice("🎮 Controls: Arrow keys or WASD = move, Enter = chat, T = chat log, 1-4 = emotes, H = this help");
+}
+
+function getSpeakerName(playerId) {
+  const player = state.players.get(playerId);
+  if (!player) {
+    return "A buddy";
+  }
+
+  return player.isGhost
+    ? `Ghost ${player.buddyMeta?.buddyName || player.name}`
+    : player.name;
+}
+
+function announce(text) {
+  const announcer = document.getElementById("a11y-announcer");
+  if (!announcer) {
+    return;
+  }
+
+  announcer.textContent = "";
+  window.setTimeout(() => {
+    announcer.textContent = text;
+  }, 20);
 }
