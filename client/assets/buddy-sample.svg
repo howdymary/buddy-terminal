@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360">
+  <rect width="640" height="360" rx="18" fill="#0f1712"/>
+  <rect x="20" y="20" width="600" height="320" rx="12" fill="#111b15" stroke="#405545" stroke-width="2"/>
+  <text x="40" y="58" fill="#d9e3d2" font-family="monospace" font-size="24">$ claude</text>
+  <text x="40" y="98" fill="#84c6a2" font-family="monospace" font-size="24">/buddy</text>
+  <text x="40" y="144" fill="#f8f2d9" font-family="monospace" font-size="18">  /\_/\\\\</text>
+  <text x="40" y="170" fill="#f8f2d9" font-family="monospace" font-size="18"> ( o.o )   your buddy appears here</text>
+  <text x="40" y="196" fill="#f8f2d9" font-family="monospace" font-size="18">  &gt; ^ &lt;</text>
+  <text x="40" y="250" fill="#b7c5bb" font-family="monospace" font-size="18">Screenshot this terminal buddy and upload it in Buddy Terminal.</text>
+</svg>

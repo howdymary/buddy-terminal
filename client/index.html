@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>Buddy Terminal</title>
+    <meta
+      name="description"
+      content="Upload your Claude /buddy, turn it into a pixel sprite, and explore a shared retro overworld together."
+    >
+    <link rel="stylesheet" href="/css/style.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <section id="landingScreen" class="landing-screen">
+        <section class="landing-card">
+          <div>
+            <p class="section-label">Claude-themed multiplayer campus</p>
+            <h1 class="pixel-title">BUDDY TERMINAL</h1>
+            <p class="tagline">Upload your Claude /buddy. Explore together.</p>
+          </div>
+
+          <div class="field-card">
+            <p class="step-title">1. Pick your name</p>
+            <div class="retro-input-row">
+              <input
+                id="nameInput"
+                class="retro-input"
+                type="text"
+                autocomplete="nickname"
+                maxlength="16"
+                placeholder="WanderingFerret_42"
+                aria-label="Display name"
+              >
+              <button id="randomNameButton" class="secondary-button" type="button">🎲 Random</button>
+            </div>
+            <p class="hint-text">Hit Enter to accept the current name. Letters, numbers, spaces, and underscores only.</p>
+          </div>
+
+          <div class="upload-card">
+            <div class="upload-actions">
+              <p class="step-title">2. Choose your buddy</p>
+              <button id="helperButton" class="icon-button" type="button" aria-label="How to get your buddy">?</button>
+            </div>
+
+            <div class="upload-grid">
+              <div>
+                <div id="uploadDropzone" class="upload-dropzone" tabindex="0">
+                  <div>
+                    <p class="step-title">Upload your /buddy</p>
+                <p class="helper-text">Drop a full card screenshot here, browse for one, or just paste from your clipboard.</p>
+                    <button id="browseButton" class="mini-button" type="button">Choose file</button>
+                    <input id="fileInput" type="file" accept="image/png,image/jpeg,image/gif" class="hidden">
+                  </div>
+                </div>
+                <div class="helper-row">
+                  <span class="microcopy">Max 2MB. Real buddy cards unlock rarity auras when the server can parse them.</span>
+                </div>
+              </div>
+
+              <div class="picker-card">
+                <p class="picker-title">Pick a buddy instead</p>
+                <p class="picker-copy">No Claude buddy handy? Grab a default sprite and jump in. Defaults are clean, cute, and aura-free.</p>
+                <div id="defaultBuddyGrid" class="default-buddy-grid"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="field-card">
+            <p class="step-title">3. Enter the terminal</p>
+            <div class="preview-meta preview-meta--stack">
+              <span id="enterStatus" class="status-line">Choose a name and buddy to continue.</span>
+              <span id="uploadStatus" class="status-line">Paste a screenshot or pick a buddy to get moving fast.</span>
+              <span id="worldFull" class="world-full hidden"></span>
+            </div>
+            <button id="enterWorldButton" class="primary-button pulse" type="button" disabled>
+              ENTER WORLD →
+            </button>
+          </div>
+        </section>
+
+        <aside class="preview-card">
+          <p class="section-label">Live preview</p>
+          <div class="preview-pane-grid">
+            <canvas id="previewSceneCanvas" class="preview-scene" width="320" height="240"></canvas>
+
+            <div class="preview-panel">
+              <canvas id="previewSpriteCanvas" width="128" height="128"></canvas>
+              <div>
+                <p class="step-title">This is you!</p>
+                <p class="preview-caption">Your buddy becomes a 32×32 pixel sprite with walk-cycle frames before you spawn.</p>
+                <p class="arrow-label">⬑ walking preview</p>
+                <div id="parsedBuddyMeta" class="parsed-buddy-meta hidden"></div>
+              </div>
+            </div>
+          </div>
+          <p class="helper-text">Collect glowing compute tokens on the campus paths, press Enter to chat, T for the log, and 1–4 for quick emotes.</p>
+        </aside>
+
+        <div id="helperOverlay" class="helper-overlay" aria-hidden="true">
+          <div class="helper-card">
+            <div class="upload-actions">
+              <p class="step-title">How to get your /buddy</p>
+              <button id="closeHelperButton" class="icon-button" type="button" aria-label="Close help">✕</button>
+            </div>
+            <ol class="helper-text">
+              <li>Open your terminal</li>
+              <li>Run <code>claude</code> to start Claude Code</li>
+              <li>Type <code>/buddy</code> and press Enter</li>
+              <li>Screenshot your buddy card and drop or paste it here</li>
+            </ol>
+            <img class="helper-screenshot" src="/assets/buddy-sample.svg" alt="Sample Claude buddy terminal screenshot">
+          </div>
+        </div>
+      </section>
+
+      <section id="gameScreen" class="game-screen hidden">
+        <canvas id="gameCanvas" width="1280" height="720"></canvas>
+
+        <div class="hud">
+          <div class="hud-top">
+            <div class="hud-pill-row">
+              <div id="tokenCountChip" class="hud-chip hud-chip--accent">
+                <span id="tokenCount">🪙 0</span>
+              </div>
+              <div class="hud-chip">
+                <span id="playerSummary">🧭 Ready to explore</span>
+              </div>
+            </div>
+            <div class="hud-pill-row">
+              <div class="hud-chip">
+                <span id="onlineCount">🌐 0 online</span>
+              </div>
+              <button id="toggleAurasButton" class="hud-chip hud-chip--button" type="button">✨ Auras on</button>
+              <button id="toggleChatPanelButton" class="hud-chip hud-chip--button" type="button">T Chat</button>
+            </div>
+          </div>
+
+          <div id="chatPanel" class="chat-panel">
+            <div class="chat-panel__header">
+              <span>Town chat</span>
+              <span id="chatPanelStatus" class="chat-panel__status">0 recent messages</span>
+            </div>
+            <div id="chatPanelMessages" class="chat-panel__messages"></div>
+          </div>
+
+          <div class="hud-bottom">
+            <div id="chatBar" class="chat-bar">
+              <input
+                id="chatInput"
+                class="chat-input"
+                type="text"
+                maxlength="80"
+                placeholder="Say hi to the square..."
+                aria-label="Chat input"
+              >
+              <span id="chatCounter" class="chat-counter">0/80</span>
+              <button id="sendChatButton" class="secondary-button" type="button">Send</button>
+            </div>
+
+            <div id="touchControls" class="touch-controls">
+              <div class="dpad">
+                <button type="button" data-dir="up" aria-label="Move up">▲</button>
+                <button type="button" data-dir="left" aria-label="Move left">◀</button>
+                <button type="button" data-dir="down" aria-label="Move down">▼</button>
+                <button type="button" data-dir="right" aria-label="Move right">▶</button>
+              </div>
+
+              <div class="mobile-actions">
+                <button type="button" data-action="chat" aria-label="Open chat">💬</button>
+                <button type="button" data-action="wave" aria-label="Send wave">👋</button>
+                <button type="button" data-action="heart" aria-label="Send heart">❤️</button>
+                <button type="button" data-action="sparkle" aria-label="Send sparkle">✨</button>
+                <button type="button" data-action="laugh" aria-label="Send laugh">😂</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="fadeOverlay" class="fade-enter"></div>
+      </section>
+    </div>
+
+    <script type="module" src="/js/main.js"></script>
+  </body>
+</html>

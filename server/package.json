@@ -1,0 +1,19 @@
+{
+  "name": "buddy-terminal-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node index.js",
+    "start": "NODE_ENV=production node index.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "express": "^4.21.2",
+    "multer": "^2.0.2",
+    "sharp": "^0.33.5",
+    "tesseract.js": "^6.0.1",
+    "uuid": "^11.1.0",
+    "ws": "^8.18.0"
+  }
+}
